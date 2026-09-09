@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+src-tauri/target/
+.DS_Store
+.verify/
+
+# Private governance provider reference — not part of the public repository.
+backend/agentcess-reference/
+PRIVATE_PEER_SETUP.md

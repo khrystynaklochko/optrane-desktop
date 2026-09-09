@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"OPTRANE desktop capabilities","local":true,"windows":["main"],"permissions":["core:default","deep-link:default","notification:default","opener:default"]}}
