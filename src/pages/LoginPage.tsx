@@ -1,10 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { probeGatewayPairing } from '../api/gateway';
 import { OPTRANE_WEB_BASE } from '../config/optrane';
 import { useAuthState } from '../state/AuthState';
 
 export function LoginPage() {
   const auth = useAuthState();
   const [error, setError] = useState('');
+  const [gatewayState, setGatewayState] = useState<'checking' | 'ready' | 'bootstrap-blocked' | 'backend-outdated'>('checking');
+
+  useEffect(() => {
+    let alive = true;
+    void probeGatewayPairing()
+      .then((state) => { if (alive) setGatewayState(state); })
+      .catch(() => { if (alive) setGatewayState('backend-outdated'); });
+    return () => { alive = false; };
+  }, []);
 
   const verify = async () => {
     setError('');
@@ -38,7 +48,9 @@ export function LoginPage() {
         <button className="primary wide" disabled={auth.verificationBusy} onClick={() => void verify()}>{auth.verificationBusy ? 'Opening verification…' : auth.verification ? 'Open verification website again' : 'Continue on OPTRANE website'}</button>
         {auth.verification && <div className="browser-verification-card"><span className="status-dot"/><div><b>Verification request active</b><small>Request {auth.verification.requestId.slice(0, 12)}… · expires {auth.verification.expiresAt ? new Date(auth.verification.expiresAt).toLocaleTimeString() : 'soon'}</small></div></div>}
         {auth.verification && <button className="ghost wide" disabled={auth.verificationBusy} onClick={() => void finish()}>I verified — reconnect now</button>}
+        {gatewayState !== 'checking' && gatewayState !== 'ready' && <div className="auth-message error">Desktop pairing is not available on the production gateway yet. The Lovable project still needs the latest `backend/lovable` deployment (`itrain-api` plus the `/desktop/verify` page). After that is published, restart pairing here.</div>}
         {(auth.verificationMessage || error) && <div className={`auth-message ${error ? 'error' : ''}`}>{error || auth.verificationMessage}</div>}
+        {auth.verification && <small className="auth-security">After you verify on the website, click “I verified — reconnect now” if OPTRANE Command does not reopen automatically.</small>}
         {(import.meta.env.VITE_OPTRANE_ALLOW_ANONYMOUS_DEMO ?? 'false') === 'true' && <><div className="auth-divider"><span>demo</span></div><button className="ghost wide" onClick={() => void auth.startAnonymousDemo()}>Open isolated demo session</button></>}
         <small className="auth-security">The OPTRANE session is stored through the operating-system credential store in Tauri and refreshed only through the OPTRANE gateway. The desktop never receives governance-provider, Google Cloud, ClickHouse, MCP, peer-signing or service-role credentials.</small>
       </div>

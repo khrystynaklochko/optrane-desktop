@@ -22,3 +22,12 @@ export const OPTRANE_DESKTOP_VERIFY_URL = (
 ).replace(/\/$/, '');
 
 export const OPTRANE_DESKTOP_CALLBACK = import.meta.env.VITE_OPTRANE_DESKTOP_CALLBACK ?? 'optrane://auth/callback';
+
+// Publishable Supabase key for the Lovable gateway edge proxy. This is already
+// public on the OPTRANE website bundle and is required to reach bootstrap routes
+// such as /desktop-auth/start before a user session exists.
+export const OPTRANE_GATEWAY_PUBLISHABLE_KEY = (
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+  ?? import.meta.env.VITE_SUPABASE_ANON_KEY
+  ?? 'sb_publishable_tR-JmlGTCrr7ix7PxBXymQ_G-AQ8eMj'
+).trim();

@@ -1,7 +1,8 @@
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
+import { publicGatewayJson } from './gateway';
 import { setDesktopSession } from './session';
-import { OPTRANE_API_BASE, OPTRANE_DESKTOP_CALLBACK, OPTRANE_DESKTOP_VERIFY_URL } from '../config/optrane';
+import { OPTRANE_DESKTOP_CALLBACK, OPTRANE_DESKTOP_VERIFY_URL } from '../config/optrane';
 
 export interface DesktopAuthStart {
   requestId: string;
@@ -24,34 +25,13 @@ function inTauri() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-async function publicJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${OPTRANE_API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-optrane-client': 'desktop',
-      ...init?.headers,
-    },
-  });
-  if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = await response.json() as { error?: { message?: string }; detail?: string };
-      message = body.error?.message ?? body.detail ?? message;
-    } catch { /* HTTP message is enough */ }
-    throw new Error(message);
-  }
-  const body = await response.json() as { data?: T } | T;
-  return body && typeof body === 'object' && 'data' in body ? (body as { data: T }).data : body as T;
-}
-
 async function appVersion() {
   if (!inTauri()) return 'web-dev';
   try { return await getVersion(); } catch { return 'unknown'; }
 }
 
 export async function startWebsiteVerification(): Promise<DesktopAuthStart> {
-  const value = await publicJson<any>('/desktop-auth/start', {
+  const value = await publicGatewayJson<any>('/desktop-auth/start', {
     method: 'POST',
     body: JSON.stringify({
       callbackUri: OPTRANE_DESKTOP_CALLBACK,
@@ -93,7 +73,13 @@ export async function completeWebsiteVerification(requestId?: string): Promise<v
   if (!pending) throw new Error('No pending OPTRANE website verification exists on this device.');
   if (requestId && requestId !== pending.requestId) throw new Error('The verification response does not match this OPTRANE desktop request.');
 
-  const exchange = await publicJson<any>('/desktop-auth/exchange', {
+  const status = await checkWebsiteVerification();
+  if (status === 'PENDING' || status === 'UNKNOWN') {
+    throw new Error('Website verification is not approved yet. Sign in on the OPTRANE website and click “Verify OPTRANE Command”, then return here.');
+  }
+  if (status === 'EXPIRED') throw new Error('This pairing request expired. Start again from OPTRANE Command.');
+
+  const exchange = await publicGatewayJson<any>('/desktop-auth/exchange', {
     method: 'POST',
     body: JSON.stringify({
       requestId: pending.requestId,
@@ -123,7 +109,7 @@ export async function checkWebsiteVerification(): Promise<string> {
   const pending = pendingWebsiteVerification();
   if (!pending) return 'NONE';
   const params = new URLSearchParams({ verifier: pending.verifier });
-  const status = await publicJson<any>(`/desktop-auth/${encodeURIComponent(pending.requestId)}/status?${params}`);
+  const status = await publicGatewayJson<any>(`/desktop-auth/${encodeURIComponent(pending.requestId)}/status?${params}`);
   return String(status.status ?? 'UNKNOWN');
 }
 
