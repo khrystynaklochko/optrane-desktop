@@ -36,8 +36,10 @@ export function ScriptRevisionPage({ onToast }: { onToast: (message: string) => 
       setUploadState('VERIFYING');
       const dashboard = await api.getDashboard(state.activeProductionId);
       setUploadState('READY');
-      state.setActiveRevisionVersion(uploaded.version || dashboard.currentScriptVersion);
-      state.setProduction(dashboard);
+      const revisionVersion = uploaded.version || dashboard.currentScriptVersion || 1;
+      state.setActiveRevisionVersion(revisionVersion);
+      state.setActiveScriptVersionId(uploaded.scriptVersionId ?? null);
+      state.setProduction({ ...dashboard, currentScriptVersion: Math.max(dashboard.currentScriptVersion, revisionVersion) });
       state.setChanges(state.activeProductionId === 'nightfall-demo' ? demoChanges : []);
       state.setScreen('change-review');
     } catch (error) {

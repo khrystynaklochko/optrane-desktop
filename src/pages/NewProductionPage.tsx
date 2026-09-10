@@ -19,19 +19,19 @@ export function NewProductionPage({ onToast }: { onToast: (message: string) => v
     try {
       const created = await api.createProduction({ title, shoot_start: shootStart, shoot_end: shootEnd });
       const parsed = await parseScriptFile(file);
-      if (parsed.kind === 'pdf' && parsed.file) {
-        await api.uploadScript(created.production_id, parsed.file, 'BASELINE', setProgress);
-      } else {
-        await api.uploadScriptContent(created.production_id, {
+      const uploaded = parsed.kind === 'pdf' && parsed.file
+        ? await api.uploadScript(created.production_id, parsed.file, 'BASELINE', setProgress)
+        : await api.uploadScriptContent(created.production_id, {
           title: parsed.name,
           content: parsed.content ?? '',
           label: 'BASELINE',
         }, 'BASELINE', setProgress);
-      }
       const dashboard = await api.getDashboard(created.production_id);
+      const baselineVersion = uploaded.version || dashboard.currentScriptVersion || 1;
       state.setActiveProductionId(created.production_id);
-      state.setActiveRevisionVersion(dashboard.currentScriptVersion);
-      state.setProduction(dashboard);
+      state.setActiveRevisionVersion(baselineVersion);
+      state.setActiveScriptVersionId(uploaded.scriptVersionId ?? null);
+      state.setProduction({ ...dashboard, currentScriptVersion: baselineVersion });
       state.setAudit((await api.getAudit(created.production_id)).events);
       state.setScreen('control');
       onToast('Production created and baseline screenplay uploaded.');

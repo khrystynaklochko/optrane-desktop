@@ -51,7 +51,9 @@ function OptraneApplication() {
       if (!productionId || ['bootstrap','nightfall-demo'].includes(productionId)) throw new ApiError(404, 'No OPTRANE production exists for this account yet.', '/productions');
       const [dashboard, audit] = await Promise.all([api.getDashboard(productionId), api.getAudit(productionId)]);
       state.setProduction({ ...dashboard, offlineSnapshot: false });
-      state.setActiveRevisionVersion(dashboard.currentScriptVersion);
+      if (dashboard.currentScriptVersion > 0) {
+        state.setActiveRevisionVersion(Math.max(state.activeRevisionVersion, dashboard.currentScriptVersion));
+      }
       state.setAudit(audit.events);
       cache.saveProduction(dashboard);
       cache.saveAudit(audit.events);
@@ -97,7 +99,7 @@ function OptraneApplication() {
       if (!state.audit.length) state.setAudit(cache.loadAudit() ?? demoAudit);
       showToast('OPTRANE gateway unavailable — showing the last local production snapshot.');
     }
-  }, [state.activeProductionId, state.setActiveProductionId, state.setScreen, state.setProduction, state.setActiveRevisionVersion, state.setAudit, state.setOffline, state.audit.length, showToast, auth.user?.email]);
+  }, [state.activeProductionId, state.activeRevisionVersion, state.setActiveProductionId, state.setScreen, state.setProduction, state.setActiveRevisionVersion, state.setAudit, state.setOffline, state.audit.length, showToast, auth.user?.email]);
 
   useEffect(() => { localStorage.setItem('optrane.activeProductionId', state.activeProductionId); }, [state.activeProductionId]);
   useEffect(() => { void refreshProduction(); }, [refreshProduction]);

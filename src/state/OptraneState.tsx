@@ -13,6 +13,8 @@ interface OptraneStateValue {
   setActiveProductionId: (id: string) => void;
   activeRevisionVersion: number;
   setActiveRevisionVersion: (version: number) => void;
+  activeScriptVersionId: string | null;
+  setActiveScriptVersionId: (id: string | null) => void;
   activeAnalysisId: string | null;
   activeAgentId: string | null;
   setActiveAgentId: (id: string | null) => void;
@@ -63,6 +65,7 @@ export function OptraneStateProvider({ children }: { children: ReactNode }) {
   const [screen, setScreen] = useState<Screen>('control');
   const [activeProductionId, setActiveProductionId] = useState(defaultProductionId);
   const [activeRevisionVersion, setActiveRevisionVersion] = useState(demoProduction.currentScriptVersion);
+  const [activeScriptVersionId, setActiveScriptVersionId] = useState<string | null>(null);
   const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
@@ -112,12 +115,13 @@ export function OptraneStateProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<OptraneStateValue>(() => ({
     screen, setScreen, activeProductionId, setActiveProductionId, activeRevisionVersion, setActiveRevisionVersion,
+    activeScriptVersionId, setActiveScriptVersionId,
     activeAnalysisId, setActiveAnalysisId, activeAgentId, setActiveAgentId, selectedPlanId, setSelectedPlanId, connectionState, setConnectionState,
     production, setProduction, changes, setChanges, impacts, setImpacts, plans, setPlans, audit, setAudit,
     analysisEvents, setAnalysisEvents, graph, setGraph, artifacts, setArtifacts, readinessBefore, setReadinessBefore,
     readinessAfter, setReadinessAfter, researchDraft, setResearchDraft, offline, setOffline, resetClientDemo
   }), [
-    screen, activeProductionId, activeRevisionVersion, activeAnalysisId, activeAgentId, selectedPlanId, connectionState, production,
+    screen, activeProductionId, activeRevisionVersion, activeScriptVersionId, activeAnalysisId, activeAgentId, selectedPlanId, connectionState, production,
     setProduction, changes, impacts, plans, audit, analysisEvents, graph, artifacts, readinessBefore, readinessAfter, researchDraft,
     offline, resetClientDemo
   ]);

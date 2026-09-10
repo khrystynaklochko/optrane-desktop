@@ -55,6 +55,8 @@ async function parseError(response: Response, path: string): Promise<ApiError> {
       message = 'You do not have permission for this production action.';
     } else if (response.status === 404 && message === `${response.status} ${response.statusText}`) {
       message = 'The requested OPTRANE resource was not found.';
+    } else if (path === '/analyses' && /upload a script before running an analysis/i.test(message)) {
+      message = 'Upload a baseline screenplay and at least one revision before running analysis.';
     } else if (path === '/scripts/upload' && isHostedScriptUploadError(message)) {
       message = 'PDF upload failed because the hosted gateway expects JSON script content, not multipart files. Quit OPTRANE, reopen the latest build, and try again.';
     } else if (/unknown route/i.test(message)) {
@@ -75,9 +77,14 @@ function normalizeUploadedScript(value: any, productionId: string, kind: string,
       ?? (typeof version.version === 'number' ? version.version : undefined)
       ?? 0,
     ),
+    scriptVersionId: value.scriptVersionId ?? value.script_version_id ?? version.id ?? undefined,
     filename: value.filename ?? version.filename ?? version.label ?? filename,
     kind: value.kind ?? kind,
   };
+}
+
+export function isValidProductionId(productionId: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productionId);
 }
 
 export function usesHostedGateway() {
@@ -400,8 +407,16 @@ function normalizeAgent(value: any): ProductionAgent {
 export interface UploadedScript {
   productionId: string;
   version: number;
+  scriptVersionId?: string;
   filename: string;
   kind?: 'BASELINE' | 'REVISION';
+}
+
+export interface StartedAnalysis {
+  analysisId: string;
+  status?: string;
+  readinessBefore?: number;
+  readinessAfter?: number;
 }
 
 export interface EvidenceTrailItem {
@@ -657,10 +672,35 @@ export const api = {
   uploadScriptContent: (productionId: string, input: { title: string; content: string; label?: string; scriptId?: string }, kind: 'BASELINE' | 'REVISION', onProgress?: (value: number) => void) =>
     uploadScriptContent(productionId, input, kind, onProgress),
 
-  startAnalysis: (productionId: string, version: number) => request<any>('/analyses', {
-    method: 'POST',
-    body: JSON.stringify({ productionId, production_id: productionId, revisionVersion: version, revision_version: version }),
-  }).then((value: any) => ({ analysisId: value.analysisId ?? value.analysis_id ?? value.jobId ?? value.job_id ?? value.id, status: value.status })),
+  startAnalysis: (productionId: string, version: number, scriptVersionId?: string) => {
+    if (!isValidProductionId(productionId)) {
+      throw new ApiError(422, 'Select a real OPTRANE production before starting analysis.', '/analyses', 'production_required');
+    }
+    if (version < 1) {
+      throw new ApiError(422, 'Upload a screenplay revision before starting analysis.', '/analyses', 'script_required');
+    }
+    return request<any>('/analyses', {
+      method: 'POST',
+      body: JSON.stringify({
+        production_id: productionId,
+        productionId,
+        revision_version: version,
+        revisionVersion: version,
+        ...(scriptVersionId ? { script_version_id: scriptVersionId, scriptVersionId } : {}),
+      }),
+    }).then((value: any): StartedAnalysis => {
+      const analysisId = value.analysisId ?? value.analysis_id ?? value.analysis?.id ?? value.jobId ?? value.job_id ?? value.id;
+      if (!analysisId) {
+        throw new ApiError(502, 'OPTRANE started analysis but did not return an analysis ID.', '/analyses', 'analysis_id_missing');
+      }
+      return {
+        analysisId,
+        status: value.status ?? value.analysis?.status,
+        readinessBefore: value.readiness_before ?? value.readinessBefore ?? value.analysis?.readiness_before,
+        readinessAfter: value.readiness_after ?? value.readinessAfter ?? value.analysis?.readiness_after,
+      };
+    });
+  },
   getAnalysis: (_productionId: string, analysisId: string) => request<any>(`/analyses/${analysisId}`).then((value) => normalizeAnalysis(value)),
   getRecoveryPlans: async (_productionId: string, analysisId: string) => {
     const value = await request<any>(`/analyses/${analysisId}`);

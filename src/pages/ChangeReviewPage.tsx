@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../api/client';
+import { api, usesHostedGateway } from '../api/client';
 import { useOptraneState } from '../state/OptraneState';
 
 export function ChangeReviewPage({ onToast }: { onToast: (message: string) => void }) {
@@ -14,19 +14,33 @@ export function ChangeReviewPage({ onToast }: { onToast: (message: string) => vo
   async function analyse() {
     setBusy(true);
     try {
-      const health = await api.integrationHealth();
-      if (health.strictMode && !health.strictMode.ready) {
-        onToast('Strict cloud execution is not ready. Fix Agent Runtime / ClickHouse MCP integrations first.');
-        state.setScreen('settings');
-        return;
+      const revisionVersion = Math.max(
+        state.activeRevisionVersion,
+        state.production.currentScriptVersion,
+        1,
+      );
+      if (!usesHostedGateway()) {
+        const health = await api.integrationHealth();
+        if (health.strictMode && !health.strictMode.ready) {
+          onToast('Strict cloud execution is not ready. Fix Agent Runtime / ClickHouse MCP integrations first.');
+          state.setScreen('settings');
+          return;
+        }
       }
       state.setAnalysisEvents([]); state.setImpacts([]); state.setPlans([]);
-      const started = await api.startAnalysis(state.activeProductionId, state.activeRevisionVersion);
+      const started = await api.startAnalysis(
+        state.activeProductionId,
+        revisionVersion,
+        state.activeScriptVersionId ?? undefined,
+      );
       state.setActiveAnalysisId(started.analysisId);
       state.setConnectionState('CONNECTING');
       state.setScreen('impact');
-    } catch (error) { onToast(error instanceof Error ? error.message : 'Analysis could not start'); }
-    finally { setBusy(false); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Analysis could not start';
+      onToast(message);
+      if (/upload a screenplay revision|upload a baseline/i.test(message)) state.setScreen('revision');
+    } finally { setBusy(false); }
   }
 
   return <section className="page narrow-left">
