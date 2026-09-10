@@ -10,6 +10,7 @@ import {
 import {
   loadPendingPairing,
   savePendingPairing,
+  verifyGatewayAccessToken,
   type DesktopUser,
 } from './session';
 
@@ -190,8 +191,11 @@ export async function signInWithSupabasePassword(email: string, password: string
   if (!response.ok) {
     let message = 'Could not sign in with your OPTRANE website password.';
     try {
-      const body = await response.json() as { error_description?: string; msg?: string; error?: string };
+      const body = await response.json() as { error_description?: string; msg?: string; error?: string; error_code?: string };
       message = body.error_description ?? body.msg ?? body.error ?? message;
+      if (body.error_code === 'invalid_credentials' || /invalid login credentials/i.test(message)) {
+        message = 'The website password did not match this OPTRANE account. Use the same password as on the hosted site.';
+      }
     } catch { /* keep default */ }
     throw new Error(message);
   }
@@ -213,23 +217,42 @@ export async function signInWithSupabasePassword(email: string, password: string
   };
 }
 
+async function acceptVerifiedSession(
+  claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>,
+): Promise<PairingClaimResult | null> {
+  if (!claim.accessToken || !claim.refreshToken) return null;
+  const user = await verifyGatewayAccessToken(claim.accessToken);
+  if (!user) return null;
+  return {
+    deviceToken: claim.deviceToken,
+    accessToken: claim.accessToken,
+    refreshToken: claim.refreshToken,
+    expiresIn: claim.expiresIn ?? 3600,
+    tokenType: claim.tokenType,
+    user,
+  };
+}
+
 async function resolveLegacySession(claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>, password: string): Promise<PairingClaimResult> {
-  if (claim.accessToken && claim.refreshToken) {
-    return claim as PairingClaimResult;
-  }
+  const verified = await acceptVerifiedSession(claim);
+  if (verified) return verified;
   const email = claim.user?.email;
   if (!email) {
     throw new Error('The gateway paired this device but did not return an account email. Generate a new pairing code on the OPTRANE website.');
   }
   const session = await signInWithSupabasePassword(email, password);
-  return {
+  const signedIn = await acceptVerifiedSession({
     deviceToken: claim.deviceToken,
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     expiresIn: session.expiresIn,
     tokenType: session.tokenType,
     user: session.user ?? claim.user,
-  };
+  });
+  if (!signedIn) {
+    throw new Error('Signed in to Supabase but the OPTRANE gateway rejected the session. Confirm you are on the Production gateway.');
+  }
+  return signedIn;
 }
 
 function mergeClaimWithSession(
@@ -327,21 +350,33 @@ async function finalizeClaim(
 ): Promise<PairingClaimResult> {
   await savePendingPairing({ deviceToken: claim.deviceToken, user: claim.user });
 
-  try {
-    return await exchangePairingToken(claim.deviceToken, claim.user);
-  } catch { /* fall through to claim payload / password */ }
-
-  const direct = mergeClaimWithSession(claim, claim);
+  const direct = await acceptVerifiedSession(mergeClaimWithSession(claim, claim) ?? claim);
   if (direct) return direct;
 
-  const session = await fetchPairingSession(claim.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
-  const mergedUser = claim.user?.email ? claim.user : session.user ?? claim.user;
-  const claimWithUser = { ...claim, user: mergedUser };
-  const fromSession = mergeClaimWithSession(claimWithUser, session);
+  const sessionHint = await fetchPairingSession(claim.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
+  const claimWithUser = {
+    ...claim,
+    user: claim.user?.email ? claim.user : sessionHint.user ?? claim.user,
+  };
+
+  if (password?.trim() && claimWithUser.user?.email) {
+    return resolveLegacySession(claimWithUser, password);
+  }
+
+  try {
+    const exchanged = await exchangePairingToken(claim.deviceToken, claimWithUser.user);
+    const verified = await acceptVerifiedSession(exchanged);
+    if (verified) return verified;
+  } catch { /* fall through */ }
+
+  const fromSession = await acceptVerifiedSession(mergeClaimWithSession(claimWithUser, sessionHint) ?? claimWithUser);
   if (fromSession) return fromSession;
 
   if (!password?.trim()) {
     throw new Error('Enter your OPTRANE website password to finish pairing. The gateway pairs the device first, then uses your account password to open the desktop session.');
+  }
+  if (!claimWithUser.user?.email) {
+    throw new Error('The gateway paired this device but did not return an account email. Generate a new pairing code on the OPTRANE website.');
   }
   return resolveLegacySession(claimWithUser, password);
 }
@@ -351,9 +386,6 @@ export async function completePendingPairing(password?: string): Promise<Pairing
   if (!pending) {
     throw new Error('No pending desktop pairing was found on this device. Generate a new pairing code on the OPTRANE website.');
   }
-  try {
-    return await exchangePairingToken(pending.deviceToken, pending.user);
-  } catch { /* fall through */ }
 
   const session = await fetchPairingSession(pending.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
   const claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>> = {
@@ -364,6 +396,19 @@ export async function completePendingPairing(password?: string): Promise<Pairing
     refreshToken: session.refreshToken,
     tokenType: session.tokenType,
   };
+
+  if (password?.trim() && claim.user?.email) {
+    try {
+      return await resolveLegacySession(claim, password);
+    } catch { /* fall through to token exchange */ }
+  }
+
+  try {
+    const exchanged = await exchangePairingToken(pending.deviceToken, claim.user);
+    const verified = await acceptVerifiedSession(exchanged);
+    if (verified) return verified;
+  } catch { /* fall through */ }
+
   if (!password?.trim()) {
     throw new Error('Enter your OPTRANE website password to finish pairing.');
   }
