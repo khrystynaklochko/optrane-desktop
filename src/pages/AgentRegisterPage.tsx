@@ -38,7 +38,11 @@ export function AgentRegisterPage({ onToast }: { onToast: (message: string) => v
       const agent = await api.registerAgent(state.activeProductionId, draft);
       setResult(agent);
       state.setActiveAgentId(agent.id);
-      onToast(agent.governance?.passportId ? 'Agent registered and governance passport issued.' : 'Agent created; governance provisioning is still pending.');
+      onToast(agent.governance?.passportId
+        ? 'Agent registered and governance passport issued.'
+        : agent.status === 'ACTIVE'
+          ? 'Agent registered on the production gateway.'
+          : 'Agent created; governance provisioning is still pending.');
     } catch (error) { onToast(error instanceof Error ? error.message : 'Agent registration failed'); }
     finally { setBusy(false); }
   };

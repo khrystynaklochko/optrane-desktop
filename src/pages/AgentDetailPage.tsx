@@ -12,11 +12,13 @@ export function AgentDetailPage({ onToast }: { onToast: (message: string) => voi
   const load = useCallback(async () => {
     if (!state.activeAgentId) return;
     try {
-      const [nextAgent, nextImprovements] = await Promise.all([
-        api.getAgent(state.activeProductionId, state.activeAgentId),
-        api.listAgentImprovements(state.activeProductionId, state.activeAgentId),
-      ]);
-      setAgent(nextAgent); setImprovements(nextImprovements);
+      const nextAgent = await api.getAgent(state.activeProductionId, state.activeAgentId);
+      setAgent(nextAgent);
+      try {
+        setImprovements(await api.listAgentImprovements(state.activeProductionId, state.activeAgentId));
+      } catch {
+        setImprovements([]);
+      }
     } catch (error) { onToast(error instanceof Error ? error.message : 'Could not load agent'); }
   }, [state.activeAgentId, state.activeProductionId, onToast]);
   useEffect(() => { void load(); }, [load]);

@@ -55,6 +55,8 @@ async function parseError(response: Response, path: string): Promise<ApiError> {
       message = 'You do not have permission for this production action.';
     } else if (response.status === 404 && message === `${response.status} ${response.statusText}`) {
       message = 'The requested OPTRANE resource was not found.';
+    } else if (/unknown route/i.test(message)) {
+      message = `This OPTRANE gateway route is not available yet (${path}).`;
     } else if (response.status >= 500 && message === `${response.status} ${response.statusText}`) {
       message = 'OPTRANE gateway error. Try again in a moment.';
     }
@@ -96,6 +98,17 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
   return unwrap(await response.json() as Envelope<T>);
 }
 
+async function optionalRequest<T>(path: string, fallback: T, init?: RequestInit): Promise<T> {
+  try {
+    return await request<T>(path, init);
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || /unknown route/i.test(error.message))) {
+      return fallback;
+    }
+    throw error;
+  }
+}
+
 function normalizeResearchRisk(value: any, index: number): ResearchRisk {
   return {
     id: String(value.id ?? value.riskId ?? value.risk_id ?? index),
@@ -134,22 +147,23 @@ function normalizeResearchBrief(value: any): ResearchBrief {
 }
 
 function normalizeProduction(value: any): ProductionSummary {
+  const record = value?.production && typeof value.production === 'object' ? value.production : value;
   return {
-    productionId: value.productionId ?? value.production_id ?? value.id,
-    title: value.title ?? 'Untitled Production',
-    readiness: value.readiness ?? value.currentReadiness ?? value.current_readiness ?? 0,
-    scenes: value.scenes ?? value.sceneCount ?? value.scene_count ?? 0,
-    crew: value.crew ?? value.crewCount ?? value.crew_count ?? 0,
-    cast: value.cast ?? value.castCount ?? value.cast_count ?? 0,
-    locations: value.locations ?? value.locationCount ?? value.location_count ?? 0,
-    plannedCost: value.plannedCost ?? value.planned_cost ?? 0,
-    currentScriptVersion: value.currentScriptVersion ?? value.current_script_version ?? 0,
-    riskCounts: value.riskCounts ?? value.risk_counts ?? {
-      CRITICAL: value.criticalCount ?? value.critical_count ?? 0,
-      HIGH: value.highCount ?? value.high_count ?? 0,
-      WATCH: value.watchCount ?? value.watch_count ?? 0,
+    productionId: record.productionId ?? record.production_id ?? record.id,
+    title: record.title ?? record.name ?? 'Untitled Production',
+    readiness: record.readiness ?? record.readiness_score ?? record.currentReadiness ?? record.current_readiness ?? 0,
+    scenes: record.scenes ?? record.sceneCount ?? record.scene_count ?? 0,
+    crew: record.crew ?? record.crewCount ?? record.crew_count ?? 0,
+    cast: record.cast ?? record.castCount ?? record.cast_count ?? 0,
+    locations: record.locations ?? record.locationCount ?? record.location_count ?? 0,
+    plannedCost: record.plannedCost ?? record.planned_cost ?? 0,
+    currentScriptVersion: record.currentScriptVersion ?? record.current_script_version ?? 0,
+    riskCounts: record.riskCounts ?? record.risk_counts ?? {
+      CRITICAL: record.criticalCount ?? record.critical_count ?? 0,
+      HIGH: record.highCount ?? record.high_count ?? 0,
+      WATCH: record.watchCount ?? record.watch_count ?? 0,
     },
-    shootDayLabel: value.shootDayLabel ?? value.shoot_day_label ?? 'Production active',
+    shootDayLabel: record.shootDayLabel ?? record.shoot_day_label ?? record.status ?? 'Production active',
   };
 }
 
@@ -260,7 +274,7 @@ function normalizeAgent(value: any): ProductionAgent {
     dataClass: item.dataClass ?? item.data_class ?? item.name,
     access: item.access,
   }));
-  const governance = value.governance ?? null;
+  const governanceSource = value.governance ?? value.agentcess ?? null;
   const budget = value.budget ? {
     currency: value.budget.currency ?? 'USD',
     perRun: Number(value.budget.perRun ?? value.budget.per_run ?? 0),
@@ -301,13 +315,13 @@ function normalizeAgent(value: any): ProductionAgent {
     dataClasses,
     budget,
     selfImprovement,
-    governance: governance ? {
-      provider: governance.provider,
-      passportId: governance.passportId ?? governance.passport_id,
-      passportVersion: governance.passportVersion ?? governance.passport_version ?? '—',
-      trustStatus: governance.trustStatus ?? governance.trust_status ?? 'UNVERIFIED',
-      trustScore: governance.trustScore ?? governance.trust_score ?? null,
-      lastSyncAt: governance.lastSyncAt ?? governance.last_sync_at,
+    governance: governanceSource ? {
+      provider: governanceSource.provider ?? 'Governance',
+      passportId: governanceSource.passportId ?? governanceSource.passport_id ?? governanceSource.agentId ?? governanceSource.agent_id ?? undefined,
+      passportVersion: governanceSource.passportVersion ?? governanceSource.passport_version ?? governanceSource.policy?.version ?? '—',
+      trustStatus: governanceSource.trustStatus ?? governanceSource.trust_status ?? 'UNVERIFIED',
+      trustScore: governanceSource.trustScore ?? governanceSource.trust_score ?? null,
+      lastSyncAt: governanceSource.lastSyncAt ?? governanceSource.last_sync_at ?? governanceSource.lastSync,
     } : null,
     registrationError: value.registrationError ?? value.registration_error,
     createdAt: value.createdAt ?? value.created_at,
@@ -492,12 +506,27 @@ export const api = {
 
   listProductions: () => request<any>('/productions').then((value: any) => (Array.isArray(value) ? value : value.productions ?? value.items ?? []).map(normalizeProduction)),
   createProduction: async (body: { title: string; shoot_start: string; shoot_end: string }) => {
-    const value = await request<any>('/productions', { method: 'POST', body: JSON.stringify({ ...body, shootStart: body.shoot_start, shootEnd: body.shoot_end }) });
-    const production_id = value.production_id ?? value.productionId ?? value.id;
+    const value = await request<any>('/productions', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: body.title,
+        title: body.title,
+        shoot_start: body.shoot_start,
+        shoot_end: body.shoot_end,
+        shootStart: body.shoot_start,
+        shootEnd: body.shoot_end,
+      }),
+    });
+    const production = value.production ?? value;
+    const production_id = value.production_id ?? value.productionId ?? production.id ?? value.id;
     if (!production_id) throw new Error('OPTRANE created a production without returning its ID.');
-    return { production_id, title: value.title ?? body.title, status: value.status ?? 'SETUP' };
+    return {
+      production_id,
+      title: production.title ?? production.name ?? body.title,
+      status: production.status ?? value.status ?? 'SETUP',
+    };
   },
-  getDashboard: (productionId: string) => request<any>(`/productions/${productionId}/summary`).then(normalizeProduction),
+  getDashboard: (productionId: string) => request<any>(`/productions/${productionId}/summary`).then((value: any) => normalizeProduction(value)),
   getGraph: (productionId: string) => request<GraphResponse>(`/productions/${productionId}/graph`),
   getAudit: (productionId: string) => request<any>(`/productions/${productionId}/audit`).then(normalizeAudit),
   getEvidenceTrail: getEvidenceTrailRequest,
@@ -562,9 +591,9 @@ export const api = {
   governanceStatus: () => request<any>('/system/governance/status'),
 
   listAgents: (productionId: string) => request<any>(`/productions/${productionId}/agents`).then((v: any) => (Array.isArray(v) ? v : v.agents ?? v.items ?? []).map(normalizeAgent)),
-  registerAgent: (productionId: string, body: RegisterAgentInput) => request<any>(`/productions/${productionId}/agents/register`, { method: 'POST', body: JSON.stringify(body) }).then((v: any) => normalizeAgent(v.agent ?? v)),
+  registerAgent: (productionId: string, body: RegisterAgentInput) => request<any>(`/productions/${productionId}/agents/register`, { method: 'POST', body: JSON.stringify(body) }).then((v: any) => normalizeAgent(v.agent ?? v.data ?? v)),
   registerFleet: (productionId: string, body: Record<string, unknown> = {}) => request<any>(`/productions/${productionId}/agents/register-fleet`, { method: 'POST', body: JSON.stringify(body) }).then((v: any) => (v.agents ?? v.fleet ?? v.items ?? []).map(normalizeAgent)),
-  getAgent: (productionId: string, agentId: string) => request<any>(`/productions/${productionId}/agents/${agentId}`).then((v: any) => normalizeAgent(v.agent ?? v)),
+  getAgent: (productionId: string, agentId: string) => request<any>(`/productions/${productionId}/agents/${agentId}`).then((v: any) => normalizeAgent(v.agent ?? v.data ?? v)),
   syncAgent: (productionId: string, agentId: string) => request<any>(`/productions/${productionId}/agents/${agentId}/sync`, { method: 'POST', body: '{}' }).then((v: any) => normalizeAgent(v.agent ?? v)),
   retryAgentRegistration: (productionId: string, agentId: string) => request<any>(`/productions/${productionId}/agents/${agentId}/retry-registration`, { method: 'POST', body: '{}' }).then((v: any) => normalizeAgent(v.agent ?? v)),
   revokeAgent: (productionId: string, agentId: string, reason: string) => request<any>(`/productions/${productionId}/agents/${agentId}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) }).then((v: any) => normalizeAgent(v.agent ?? v)),
@@ -579,7 +608,7 @@ export const api = {
   } as AuthorizationDecision)),
   getAgentEvidence: (productionId: string, agentId: string) => request<any>(`/productions/${productionId}/agents/${agentId}/evidence`).then((v: any) => (Array.isArray(v) ? v : v.evidence ?? v.items ?? []).map(normalizeEvidence)),
   postAgentEvidence: (productionId: string, agentId: string, body: Record<string, unknown>) => request<any>(`/productions/${productionId}/agents/${agentId}/evidence`, { method: 'POST', body: JSON.stringify(body) }).then((v: any) => normalizeEvidence(v.evidence ?? v)),
-  listAgentImprovements: (productionId: string, agentId: string) => request<any>(`/productions/${productionId}/agents/${agentId}/improvements`).then((v: any) => (v.items ?? v.improvements ?? []).map(normalizeImprovement)),
+  listAgentImprovements: (productionId: string, agentId: string) => optionalRequest<any>(`/productions/${productionId}/agents/${agentId}/improvements`, { items: [] }).then((v: any) => (v.items ?? v.improvements ?? []).map(normalizeImprovement)),
   proposeAgentImprovement: (productionId: string, agentId: string, body: Record<string, unknown> = {}) => request<any>(`/productions/${productionId}/agents/${agentId}/improvements/propose`, { method: 'POST', body: JSON.stringify(body) }).then((v: any) => normalizeImprovement(v.improvement ?? v)),
   decideAgentImprovement: (productionId: string, agentId: string, candidateId: string, decision: 'approve' | 'reject') => request<any>(`/productions/${productionId}/agents/${agentId}/improvements/${candidateId}/${decision}`, { method: 'POST', body: '{}' }).then((v: any) => normalizeImprovement(v.improvement ?? v)),
 
