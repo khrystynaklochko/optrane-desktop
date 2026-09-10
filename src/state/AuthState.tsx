@@ -30,8 +30,8 @@ interface AuthStateValue {
   verificationMessage: string;
   verifyOnWebsite: () => Promise<void>;
   finishWebsiteVerification: (requestId?: string) => Promise<void>;
-  claimPairingCode: (code: string, password: string) => Promise<void>;
-  finishPendingPairing: (password?: string) => Promise<void>;
+  claimPairingCode: (code: string, password: string, email?: string) => Promise<void>;
+  finishPendingPairing: (password?: string, email?: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<{ needsConfirmation: boolean }>;
   startAnonymousDemo: () => Promise<void>;
@@ -114,11 +114,11 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     setVerificationMessage('OPTRANE Command is paired with your account.');
   }, []);
 
-  const claimPairingCodeOnDevice = useCallback(async (code: string, password: string) => {
+  const claimPairingCodeOnDevice = useCallback(async (code: string, password: string, email?: string) => {
     setVerificationBusy(true);
     setVerificationMessage('Claiming the OPTRANE pairing code…');
     try {
-      await persistPairingClaim(await claimPairingCode(code, password));
+      await persistPairingClaim(await claimPairingCode(code, password, email));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not claim the pairing code';
       setVerificationMessage(message);
@@ -126,11 +126,11 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     } finally { setVerificationBusy(false); }
   }, [persistPairingClaim]);
 
-  const finishPendingPairingOnDevice = useCallback(async (password?: string) => {
+  const finishPendingPairingOnDevice = useCallback(async (password?: string, email?: string) => {
     setVerificationBusy(true);
     setVerificationMessage('Finishing OPTRANE desktop pairing…');
     try {
-      await persistPairingClaim(await completePendingPairing(password));
+      await persistPairingClaim(await completePendingPairing(password, email));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not finish desktop pairing';
       setVerificationMessage(message);

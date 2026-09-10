@@ -124,10 +124,27 @@ function normalizeClaim(value: unknown, userHint?: DesktopUser): Omit<PairingCla
     throw new Error('The gateway did not return a device token for this pairing code.');
   }
   const tokens = readTokens(record);
+  const email = typeof record.email === 'string'
+    ? record.email
+    : typeof record.userEmail === 'string'
+      ? record.userEmail
+      : typeof record.user_email === 'string'
+        ? record.user_email
+        : undefined;
+  const userId = record.userId ?? record.user_id;
+  let user = normalizeUser(record.user) ?? userHint;
+  if (!user?.email && email) {
+    user = {
+      id: user?.id ?? (typeof userId === 'string' ? userId : ''),
+      email,
+      displayName: user?.displayName,
+      emailVerified: user?.emailVerified,
+    };
+  }
   return {
     deviceToken,
     ...tokens,
-    user: normalizeUser(record.user) ?? userHint,
+    user,
   };
 }
 
@@ -344,9 +361,30 @@ export async function exchangePairingToken(deviceToken: string, userHint?: Deskt
   return session;
 }
 
+function withAccountEmail(
+  claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>,
+  accountEmail?: string,
+  sessionHint?: Partial<PairingClaimResult>,
+): Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>> {
+  const email = claim.user?.email
+    ?? sessionHint?.user?.email
+    ?? accountEmail?.trim().toLowerCase();
+  if (!email) return claim;
+  return {
+    ...claim,
+    user: {
+      id: claim.user?.id ?? sessionHint?.user?.id ?? '',
+      email,
+      displayName: claim.user?.displayName ?? sessionHint?.user?.displayName,
+      emailVerified: claim.user?.emailVerified ?? sessionHint?.user?.emailVerified,
+    },
+  };
+}
+
 async function finalizeClaim(
   claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>,
   password?: string,
+  accountEmail?: string,
 ): Promise<PairingClaimResult> {
   await savePendingPairing({ deviceToken: claim.deviceToken, user: claim.user });
 
@@ -354,10 +392,7 @@ async function finalizeClaim(
   if (direct) return direct;
 
   const sessionHint = await fetchPairingSession(claim.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
-  const claimWithUser = {
-    ...claim,
-    user: claim.user?.email ? claim.user : sessionHint.user ?? claim.user,
-  };
+  const claimWithUser = withAccountEmail(claim, accountEmail, sessionHint);
 
   if (password?.trim() && claimWithUser.user?.email) {
     return resolveLegacySession(claimWithUser, password);
@@ -381,21 +416,21 @@ async function finalizeClaim(
   return resolveLegacySession(claimWithUser, password);
 }
 
-export async function completePendingPairing(password?: string): Promise<PairingClaimResult> {
+export async function completePendingPairing(password?: string, accountEmail?: string): Promise<PairingClaimResult> {
   const pending = await loadPendingPairing();
   if (!pending) {
     throw new Error('No pending desktop pairing was found on this device. Generate a new pairing code on the OPTRANE website.');
   }
 
   const session = await fetchPairingSession(pending.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
-  const claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>> = {
+  const claim = withAccountEmail({
     deviceToken: pending.deviceToken,
     expiresIn: session.expiresIn ?? 3600,
-    user: pending.user?.email ? pending.user : session.user ?? pending.user,
+    user: pending.user,
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     tokenType: session.tokenType,
-  };
+  }, accountEmail, session);
 
   if (password?.trim() && claim.user?.email) {
     try {
@@ -412,19 +447,19 @@ export async function completePendingPairing(password?: string): Promise<Pairing
   if (!password?.trim()) {
     throw new Error('Enter your OPTRANE website password to finish pairing.');
   }
-  return finalizeClaim(claim, password);
+  return finalizeClaim(claim, password, accountEmail);
 }
 
-export async function claimPairingCode(code: string, password?: string): Promise<PairingClaimResult> {
+export async function claimPairingCode(code: string, password?: string, accountEmail?: string): Promise<PairingClaimResult> {
   try {
     const value = await postPairingClaim(code);
     const claim = normalizeClaim(value);
-    return finalizeClaim(claim, password);
+    return finalizeClaim(claim, password, accountEmail);
   } catch (error) {
     if (!(error instanceof Error) || !isUnrecognizedPairingCodeError(error.message) || !password?.trim()) {
       throw error;
     }
-    return completePendingPairing(password);
+    return completePendingPairing(password, accountEmail);
   }
 }
 

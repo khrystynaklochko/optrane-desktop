@@ -18,6 +18,7 @@ function inTauri() {
 export function LoginPage() {
   const auth = useAuthState();
   const codeRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
   const [pendingPairing, setPendingPairing] = useState(false);
@@ -35,9 +36,10 @@ export function LoginPage() {
     if (claimingRef.current || auth.verificationBusy) return;
     setError('');
     const password = passwordRef.current?.value ?? '';
+    const email = emailRef.current?.value ?? '';
     claimingRef.current = true;
     try {
-      await auth.finishPendingPairing(password.trim() || undefined);
+      await auth.finishPendingPairing(password.trim() || undefined, email.trim() || undefined);
       setPendingPairing(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not finish desktop pairing');
@@ -51,12 +53,18 @@ export function LoginPage() {
     setError('');
     const rawCode = codeRef.current?.value ?? '';
     const password = passwordRef.current?.value ?? '';
+    const email = emailRef.current?.value ?? '';
     const normalizedCode = formatPairingCodeInput(rawCode);
     if (codeRef.current) codeRef.current.value = normalizedCode;
 
     if (!isCompletePairingCode(normalizedCode)) {
       setError('Enter the full pairing code from the website (format XXXX-XXXX).');
       codeRef.current?.focus();
+      return;
+    }
+    if (!email.trim()) {
+      setError('Enter the email address you use on the OPTRANE website.');
+      emailRef.current?.focus();
       return;
     }
     if (!password.trim()) {
@@ -66,7 +74,7 @@ export function LoginPage() {
     }
     claimingRef.current = true;
     try {
-      await auth.claimPairingCode(normalizedCode, password);
+      await auth.claimPairingCode(normalizedCode, password, email.trim());
       setPendingPairing(false);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Could not claim the pairing code';
@@ -128,6 +136,16 @@ export function LoginPage() {
               const formatted = formatPairingCodeInput(event.clipboardData.getData('text'));
               if (codeRef.current) codeRef.current.value = formatted;
             }}
+          />
+          <label htmlFor="pair-email">Website email</label>
+          <input
+            id="pair-email"
+            ref={emailRef}
+            type="email"
+            autoComplete="email"
+            defaultValue=""
+            placeholder="Same email as the OPTRANE website"
+            disabled={auth.verificationBusy}
           />
           <label htmlFor="pair-password">Website password</label>
           <input

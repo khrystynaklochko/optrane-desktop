@@ -192,15 +192,61 @@ export async function loadDesktopSession(): Promise<DesktopSession | null> {
   }
 }
 
+function userFromJwt(accessToken: string): DesktopUser | null {
+  try {
+    const segment = accessToken.split('.')[1];
+    if (!segment) return null;
+    const payload = JSON.parse(atob(segment.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
+    const id = payload.sub;
+    if (typeof id !== 'string') return null;
+    return {
+      id,
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+      emailVerified: Boolean(payload.email_verified),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchSupabaseUser(accessToken: string): Promise<DesktopUser | null> {
+  try {
+    const response = await optraneFetch(`${OPTRANE_SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: OPTRANE_GATEWAY_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (!response.ok) return null;
+    const user = normalizeGatewayUser(await response.json());
+    return user?.id ? user : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Production legacy gateway has no /auth/me — verify with /productions instead. */
 export async function verifyGatewayAccessToken(accessToken: string): Promise<DesktopUser | null> {
   if (!accessToken?.trim()) return null;
+  let user = userFromJwt(accessToken);
+
+  try {
+    const response = await optraneFetch(`${getOptraneApiBase()}/productions`, {
+      headers: publicGatewayHeaders({ Authorization: `Bearer ${accessToken}` }),
+    });
+    if (response.ok) {
+      if (!user?.email) user = (await fetchSupabaseUser(accessToken)) ?? user;
+      return user?.id ? user : null;
+    }
+  } catch { /* fall through */ }
+
   try {
     const response = await optraneFetch(`${getOptraneApiBase()}/auth/me`, {
       headers: publicGatewayHeaders({ Authorization: `Bearer ${accessToken}` }),
     });
     if (!response.ok) return null;
-    const user = unwrap<DesktopUser>(await response.json());
-    return user?.id ? user : null;
+    const profile = unwrap<DesktopUser>(await response.json());
+    return profile?.id ? profile : user;
   } catch {
     return null;
   }
@@ -433,7 +479,8 @@ export async function validateDesktopSession(): Promise<DesktopSession | null> {
   }
   try {
     const accessToken = await ensureAccessToken();
-    const user = await gatewayJson<DesktopUser>('/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
+    const user = await verifyGatewayAccessToken(accessToken);
+    if (!user) return session;
     const validated = { ...(await loadDesktopSession())!, user };
     await persist(validated);
     return validated;
