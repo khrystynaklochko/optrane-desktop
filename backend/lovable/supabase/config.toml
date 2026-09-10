@@ -1,0 +1,22 @@
+project_id = "optrane-lovable"
+
+# Legacy/internal function retained for compatibility with earlier source packages.
+[functions.optrane-api]
+verify_jwt = false
+
+# Public desktop gateway. It performs its own Supabase bearer validation so that
+# /health and the desktop-auth bootstrap routes can remain intentionally public.
+[functions.itrain-api]
+verify_jwt = false
+
+# Agentcess signs this endpoint with AGENTCESS_WEBHOOK_SECRET; it is not a
+# Supabase-user JWT endpoint.
+[functions.itrain-agentcess-webhook]
+verify_jwt = false
+
+[edge_runtime]
+policy = "per_worker"
+
+# Private/manual peer administration. Never called by the desktop app.
+[functions.optrane-governance-admin]
+verify_jwt = false

@@ -1,0 +1,5 @@
+# Use Command Line Tools when full Xcode clang is unavailable (common on macOS 26 beta).
+[env]
+CC = "/Library/Developer/CommandLineTools/usr/bin/clang"
+CXX = "/Library/Developer/CommandLineTools/usr/bin/clang++"
+SDKROOT = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"

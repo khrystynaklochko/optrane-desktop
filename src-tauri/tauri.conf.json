@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OPTRANE",
+  "version": "0.5.2",
+  "identifier": "com.optrane.command",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OPTRANE \u2014 Autonomous Operations",
+        "width": 1480,
+        "height": 940,
+        "minWidth": 1080,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:8000 http://localhost:54321 ws://localhost:1420 https://*.supabase.co wss://*.supabase.co https://*.run.app https://*.lovable.app; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "optrane"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "shortDescription": "Autonomous operations and governed agent control",
+    "longDescription": "OPTRANE Command is a native autonomous-operations control room for governed agent fleets, operational workflows, approvals, evidence, and audit trails.",
+    "category": "Productivity",
+    "copyright": "OPTRANE"
+  }
+}
