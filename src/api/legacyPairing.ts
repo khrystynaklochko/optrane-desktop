@@ -119,29 +119,50 @@ function normalizeSessionRefresh(value: unknown): Partial<PairingClaimResult> {
   };
 }
 
+async function gatewayFetch(path: string, init?: RequestInit, deviceToken?: string): Promise<Response> {
+  const url = `${getOptraneApiBase()}${path}`;
+  try {
+    return await fetch(url, {
+      ...init,
+      headers: publicGatewayHeaders({
+        ...(deviceToken ? { 'X-OPTRANE-Device-Token': deviceToken } : {}),
+        ...(init?.headers as Record<string, string> | undefined),
+      }),
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(`Could not reach OPTRANE at ${url}. Check your internet connection and use the Production gateway (film-sparkle-layer.lovable.app).`);
+    }
+    throw error;
+  }
+}
+
 async function legacyJson<T>(path: string, init?: RequestInit, deviceToken?: string): Promise<T> {
-  const response = await fetch(`${getOptraneApiBase()}${path}`, {
-    ...init,
-    headers: publicGatewayHeaders({
-      ...(deviceToken ? { 'X-OPTRANE-Device-Token': deviceToken } : {}),
-      ...(init?.headers as Record<string, string> | undefined),
-    }),
-  });
+  const response = await gatewayFetch(path, init, deviceToken);
   if (!response.ok) throw new Error(await readGatewayError(response));
   if (response.status === 204) return undefined as T;
   return unwrap<T>(await response.json());
 }
 
 export async function signInWithSupabasePassword(email: string, password: string): Promise<Pick<PairingClaimResult, 'accessToken' | 'refreshToken' | 'expiresIn' | 'tokenType' | 'user'>> {
-  const response = await fetch(`${OPTRANE_SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: OPTRANE_GATEWAY_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${OPTRANE_GATEWAY_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify({ email, password }),
-  });
+  const url = `${OPTRANE_SUPABASE_URL}/auth/v1/token?grant_type=password`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: OPTRANE_GATEWAY_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${OPTRANE_GATEWAY_PUBLISHABLE_KEY}`,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error('Could not reach OPTRANE sign-in. Check your internet connection and try again.');
+    }
+    throw error;
+  }
   if (!response.ok) {
     let message = 'Could not sign in with your OPTRANE website password.';
     try {
@@ -224,9 +245,10 @@ export async function claimPairingCode(code: string, password?: string): Promise
   const fromSession = mergeClaimWithSession(claim, session);
   if (fromSession) return fromSession;
 
-  if (password?.trim()) return resolveLegacySession(claim, password);
-
-  throw new Error('This pairing code was accepted, but the gateway did not return a desktop session yet. Generate a fresh code on the OPTRANE website and try again.');
+  if (!password?.trim()) {
+    throw new Error('Enter your OPTRANE website password to finish pairing. The gateway pairs the device first, then uses your account password to open the desktop session.');
+  }
+  return resolveLegacySession(claim, password);
 }
 
 export async function fetchPairingSession(deviceToken: string): Promise<Partial<PairingClaimResult>> {

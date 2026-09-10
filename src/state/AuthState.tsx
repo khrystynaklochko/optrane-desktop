@@ -30,7 +30,7 @@ interface AuthStateValue {
   verificationMessage: string;
   verifyOnWebsite: () => Promise<void>;
   finishWebsiteVerification: (requestId?: string) => Promise<void>;
-  claimPairingCode: (code: string) => Promise<void>;
+  claimPairingCode: (code: string, password: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<{ needsConfirmation: boolean }>;
   startAnonymousDemo: () => Promise<void>;
@@ -106,11 +106,11 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     return () => unlisten?.();
   }, [finishWebsiteVerification]);
 
-  const claimPairingCodeOnDevice = useCallback(async (code: string) => {
+  const claimPairingCodeOnDevice = useCallback(async (code: string, password: string) => {
     setVerificationBusy(true);
     setVerificationMessage('Claiming the OPTRANE pairing code…');
     try {
-      const claim = await claimPairingCode(code);
+      const claim = await claimPairingCode(code, password);
       const verified = await setLegacyPairingSession(claim);
       setSession(verified);
       setVerification(null);
