@@ -391,10 +391,24 @@ export async function validateDesktopSession(): Promise<DesktopSession | null> {
   const token = await loadDeviceToken();
 
   if (!session && token) {
+    const pending = await loadPendingPairing();
+    const userHint = pending?.user;
     try {
-      const pending = await loadPendingPairing();
-      const exchanged = await exchangePairingToken(token, pending?.user);
+      const exchanged = await exchangePairingToken(token, userHint);
       return setLegacyPairingSession(exchanged);
+    } catch { /* fall through */ }
+    try {
+      const refreshed = await fetchPairingSession(token);
+      if (refreshed.accessToken && refreshed.refreshToken) {
+        return setLegacyPairingSession({
+          deviceToken: token,
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresIn: refreshed.expiresIn ?? 3600,
+          tokenType: refreshed.tokenType,
+          user: refreshed.user ?? userHint,
+        });
+      }
     } catch { /* fall through */ }
     return null;
   }
