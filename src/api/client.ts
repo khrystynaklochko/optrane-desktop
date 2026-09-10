@@ -65,12 +65,31 @@ async function parseError(response: Response, path: string): Promise<ApiError> {
 }
 
 function normalizeUploadedScript(value: any, productionId: string, kind: string, filename: string): UploadedScript {
+  const version = value?.version && typeof value.version === 'object' ? value.version : value;
   return {
-    productionId: value.productionId ?? value.production_id ?? productionId,
-    version: Number(value.version ?? value.scriptVersion ?? value.script_version ?? 0),
-    filename: value.filename ?? filename,
+    productionId: value.productionId ?? value.production_id ?? version.production_id ?? productionId,
+    version: Number(
+      value.version ?? value.scriptVersion ?? value.script_version
+      ?? (typeof version.version === 'number' ? version.version : undefined)
+      ?? 0,
+    ),
+    filename: value.filename ?? version.filename ?? version.label ?? filename,
     kind: value.kind ?? kind,
   };
+}
+
+function usesHostedGateway() {
+  return /lovable\.app/i.test(apiBase());
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
@@ -377,6 +396,44 @@ export async function authorizedFetch(input: string, init?: RequestInit) {
   return optraneFetch(input, { ...init, headers });
 }
 
+async function uploadScriptJsonBinary(
+  productionId: string,
+  file: File,
+  kind: 'BASELINE' | 'REVISION',
+  onProgress: (value: number) => void,
+  signal?: AbortSignal,
+  retried = false,
+): Promise<UploadedScript> {
+  if (file.size > 15 * 1024 * 1024) {
+    throw new ApiError(422, 'PDF exceeds the 15 MB upload limit for the hosted OPTRANE gateway.', '/scripts/upload', 'file_too_large');
+  }
+
+  onProgress(8);
+  if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
+
+  const content = await fileToBase64(file);
+  onProgress(45);
+  if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
+
+  const value = await request<any>('/scripts/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      production_id: productionId,
+      productionId,
+      kind,
+      filename: file.name,
+      content_type: file.type || 'application/pdf',
+      content,
+      encoding: 'base64',
+      label: kind,
+    }),
+    signal,
+  }, retried);
+
+  onProgress(100);
+  return normalizeUploadedScript(value, productionId, kind, file.name);
+}
+
 async function uploadScriptMultipart(
   productionId: string,
   file: File,
@@ -385,6 +442,18 @@ async function uploadScriptMultipart(
   signal?: AbortSignal,
   retried = false,
 ): Promise<UploadedScript> {
+  if (usesHostedGateway()) {
+    try {
+      return await uploadScriptJsonBinary(productionId, file, kind, onProgress, signal, retried);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !retried) {
+        await refreshDesktopSession();
+        return uploadScriptJsonBinary(productionId, file, kind, onProgress, signal, true);
+      }
+      throw error;
+    }
+  }
+
   const form = new FormData();
   form.append('productionId', productionId);
   form.append('production_id', productionId);
