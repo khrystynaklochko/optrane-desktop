@@ -55,6 +55,8 @@ async function parseError(response: Response, path: string): Promise<ApiError> {
       message = 'You do not have permission for this production action.';
     } else if (response.status === 404 && message === `${response.status} ${response.statusText}`) {
       message = 'The requested OPTRANE resource was not found.';
+    } else if (path === '/scripts/upload' && isHostedScriptUploadError(message)) {
+      message = 'PDF upload failed because the hosted gateway expects JSON script content, not multipart files. Quit OPTRANE, reopen the latest build, and try again.';
     } else if (/unknown route/i.test(message)) {
       message = `This OPTRANE gateway route is not available yet (${path}).`;
     } else if (response.status >= 500 && message === `${response.status} ${response.statusText}`) {
@@ -78,8 +80,12 @@ function normalizeUploadedScript(value: any, productionId: string, kind: string,
   };
 }
 
-function usesHostedGateway() {
-  return /lovable\.app/i.test(apiBase());
+function usesLegacyMultipartUpload() {
+  return /localhost|127\.0\.0\.1|:54321|:8000|:1420/i.test(apiBase());
+}
+
+function isHostedScriptUploadError(message: string) {
+  return /script_version_id|missing field: production_id/i.test(message);
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -404,8 +410,8 @@ async function uploadScriptJsonBinary(
   signal?: AbortSignal,
   retried = false,
 ): Promise<UploadedScript> {
-  if (file.size > 15 * 1024 * 1024) {
-    throw new ApiError(422, 'PDF exceeds the 15 MB upload limit for the hosted OPTRANE gateway.', '/scripts/upload', 'file_too_large');
+  if (file.size > 25 * 1024 * 1024) {
+    throw new ApiError(422, 'PDF exceeds the 25 MB upload limit for the hosted OPTRANE gateway.', '/scripts/upload', 'file_too_large');
   }
 
   onProgress(8);
@@ -434,7 +440,7 @@ async function uploadScriptJsonBinary(
   return normalizeUploadedScript(value, productionId, kind, file.name);
 }
 
-async function uploadScriptMultipart(
+async function uploadScriptMultipartLocal(
   productionId: string,
   file: File,
   kind: 'BASELINE' | 'REVISION',
@@ -442,18 +448,6 @@ async function uploadScriptMultipart(
   signal?: AbortSignal,
   retried = false,
 ): Promise<UploadedScript> {
-  if (usesHostedGateway()) {
-    try {
-      return await uploadScriptJsonBinary(productionId, file, kind, onProgress, signal, retried);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401 && !retried) {
-        await refreshDesktopSession();
-        return uploadScriptJsonBinary(productionId, file, kind, onProgress, signal, true);
-      }
-      throw error;
-    }
-  }
-
   const form = new FormData();
   form.append('productionId', productionId);
   form.append('production_id', productionId);
@@ -485,7 +479,7 @@ async function uploadScriptMultipart(
   if (response.status === 401 && !retried) {
     try {
       await refreshDesktopSession();
-      return uploadScriptMultipart(productionId, file, kind, onProgress, signal, true);
+      return uploadScriptMultipartLocal(productionId, file, kind, onProgress, signal, true);
     } catch {
       throw new ApiError(401, 'Session expired. Use Disconnect on the sidebar, then pair again.', '/scripts/upload');
     }
@@ -509,7 +503,21 @@ export async function uploadScriptWithProgress(
   onProgress: (value: number) => void,
   signal?: AbortSignal,
 ): Promise<UploadedScript> {
-  return uploadScriptMultipart(productionId, file, kind, onProgress, signal);
+  if (usesLegacyMultipartUpload()) {
+    return uploadScriptMultipartLocal(productionId, file, kind, onProgress, signal);
+  }
+  try {
+    return await uploadScriptJsonBinary(productionId, file, kind, onProgress, signal);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      await refreshDesktopSession();
+      return uploadScriptJsonBinary(productionId, file, kind, onProgress, signal, true);
+    }
+    if (error instanceof ApiError && isHostedScriptUploadError(error.message)) {
+      return uploadScriptJsonBinary(productionId, file, kind, onProgress, signal);
+    }
+    throw error;
+  }
 }
 
 export async function uploadScriptContent(
