@@ -171,6 +171,26 @@ function normalizeResearchBrief(value: any): ResearchBrief {
   };
 }
 
+function normalizeGraphNode(value: any): GraphResponse['nodes'][number] {
+  return {
+    id: String(value.id ?? value.node_id ?? value.key ?? crypto.randomUUID()),
+    type: String(value.type ?? value.node_type ?? value.kind ?? 'NODE'),
+    label: String(value.label ?? value.name ?? value.title ?? value.id ?? 'Node'),
+    state: String(value.state ?? value.status ?? value.node_state ?? 'UNKNOWN'),
+  };
+}
+
+function normalizeGraph(value: any): GraphResponse {
+  const record = value?.graph && typeof value.graph === 'object' ? value.graph : value;
+  const nodes = (Array.isArray(record?.nodes) ? record.nodes : record?.vertices ?? []).map(normalizeGraphNode);
+  const edges = (Array.isArray(record?.edges) ? record.edges : record?.links ?? []).map((edge: any) => ({
+    source: String(edge.source ?? edge.from ?? edge.source_id ?? ''),
+    target: String(edge.target ?? edge.to ?? edge.target_id ?? ''),
+    relation: String(edge.relation ?? edge.label ?? edge.type ?? 'linked'),
+  })).filter((edge: { source: string; target: string }) => edge.source && edge.target);
+  return { nodes, edges };
+}
+
 function normalizeProduction(value: any): ProductionSummary {
   const record = value?.production && typeof value.production === 'object' ? value.production : value;
   return {
@@ -604,7 +624,7 @@ export const api = {
     };
   },
   getDashboard: (productionId: string) => request<any>(`/productions/${productionId}/summary`).then((value: any) => normalizeProduction(value)),
-  getGraph: (productionId: string) => request<GraphResponse>(`/productions/${productionId}/graph`),
+  getGraph: (productionId: string) => request<any>(`/productions/${productionId}/graph`).then(normalizeGraph),
   getAudit: (productionId: string) => request<any>(`/productions/${productionId}/audit`).then(normalizeAudit),
   getEvidenceTrail: getEvidenceTrailRequest,
 

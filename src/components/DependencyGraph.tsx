@@ -19,8 +19,11 @@ export function DependencyGraph({ graph }: { graph: GraphResponse }) {
     })}
     {graph.nodes.map((node) => {
       const p = positions.get(node.id); if (!p) return null;
-      return <g key={node.id} className={`graph-node graph-${node.state.toLowerCase()}`} transform={`translate(${p.x},${p.y})`}>
-        <circle r={node.type === 'SCENE' ? 44 : 34}/><text textAnchor="middle" y="-3">{node.type}</text><text textAnchor="middle" y="13">{node.label.slice(0, 18)}</text>
+      const stateClass = (node.state ?? 'unknown').toLowerCase().replaceAll('_', '-');
+      const label = node.label ?? node.id ?? 'Node';
+      const type = node.type ?? 'NODE';
+      return <g key={node.id} className={`graph-node graph-${stateClass}`} transform={`translate(${p.x},${p.y})`}>
+        <circle r={type === 'SCENE' ? 44 : 34}/><text textAnchor="middle" y="-3">{type}</text><text textAnchor="middle" y="13">{label.slice(0, 18)}</text>
       </g>;
     })}
   </svg>;
