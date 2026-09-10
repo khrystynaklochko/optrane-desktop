@@ -21,6 +21,13 @@ export interface DesktopSession {
 
 const SESSION_KEY = 'desktop-session-v1';
 const DEVICE_TOKEN_KEY = 'device-token-v1';
+const PENDING_PAIRING_KEY = 'pending-pairing-v1';
+
+export interface PendingPairing {
+  deviceToken: string;
+  user?: DesktopUser;
+  claimedAt: number;
+}
 let current: DesktopSession | null = null;
 let deviceToken: string | null = null;
 let refreshPromise: Promise<DesktopSession> | null = null;
@@ -90,7 +97,35 @@ export async function loadDeviceToken(): Promise<string | null> {
   return deviceToken;
 }
 
+export async function savePendingPairing(input: { deviceToken: string; user?: DesktopUser }): Promise<void> {
+  const value: PendingPairing = {
+    deviceToken: input.deviceToken,
+    user: input.user,
+    claimedAt: Date.now(),
+  };
+  await secureAuthStorage.setItem(PENDING_PAIRING_KEY, JSON.stringify(value));
+  await persistDeviceToken(input.deviceToken);
+}
+
+export async function loadPendingPairing(): Promise<PendingPairing | null> {
+  const raw = await secureAuthStorage.getItem(PENDING_PAIRING_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as PendingPairing;
+    if (!parsed.deviceToken) throw new Error('invalid pending pairing');
+    return parsed;
+  } catch {
+    await secureAuthStorage.removeItem(PENDING_PAIRING_KEY);
+    return null;
+  }
+}
+
+export async function clearPendingPairing(): Promise<void> {
+  await secureAuthStorage.removeItem(PENDING_PAIRING_KEY);
+}
+
 export async function setLegacyPairingSession(claim: PairingClaimResult): Promise<DesktopSession> {
+  await clearPendingPairing();
   await persistDeviceToken(claim.deviceToken);
   startPairingHeartbeat(claim.deviceToken);
   return setDesktopSession({

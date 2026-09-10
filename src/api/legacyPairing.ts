@@ -7,7 +7,11 @@ import {
   OPTRANE_SUPABASE_URL,
   OPTRANE_WEB_BASE,
 } from '../config/optrane';
-import type { DesktopUser } from './session';
+import {
+  loadPendingPairing,
+  savePendingPairing,
+  type DesktopUser,
+} from './session';
 
 export interface PairingClaimResult {
   deviceToken: string;
@@ -43,12 +47,27 @@ export function formatPairingCodeInput(raw: string): string {
   return `${compact.slice(0, 4)}-${compact.slice(4)}`;
 }
 
-export function normalizePairingCode(raw: string): string {
+export function compactPairingCode(raw: string): string {
   const compact = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (compact.length !== 8) {
     throw new Error('Enter the pairing code shown on the OPTRANE website (format XXXX-XXXX).');
   }
+  return compact;
+}
+
+export function normalizePairingCode(raw: string): string {
+  const compact = compactPairingCode(raw);
   return `${compact.slice(0, 4)}-${compact.slice(4)}`;
+}
+
+function pairingCodeVariants(raw: string): string[] {
+  const compact = compactPairingCode(raw);
+  const hyphenated = `${compact.slice(0, 4)}-${compact.slice(4)}`;
+  return [...new Set([compact, hyphenated])];
+}
+
+function isUnrecognizedPairingCodeError(message: string): boolean {
+  return /pairing code not recogni[sz]ed/i.test(message);
 }
 
 export function isCompletePairingCode(raw: string): boolean {
@@ -114,9 +133,13 @@ function normalizeClaim(value: unknown, userHint?: DesktopUser): Omit<PairingCla
 function normalizeSessionRefresh(value: unknown): Partial<PairingClaimResult> {
   const record = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
   const tokens = readTokens(record);
+  const user = normalizeUser(record.user)
+    ?? (typeof record.userId === 'string' || typeof record.user_id === 'string'
+      ? { id: String(record.userId ?? record.user_id) }
+      : undefined);
   return {
     ...tokens,
-    user: normalizeUser(record.user),
+    user,
   };
 }
 
@@ -226,30 +249,81 @@ function mergeClaimWithSession(
   };
 }
 
-export async function claimPairingCode(code: string, password?: string): Promise<PairingClaimResult> {
-  const normalized = normalizePairingCode(code);
-  const value = await legacyJson<unknown>('/pairing/claim', {
-    method: 'POST',
-    body: JSON.stringify({
-      code: normalized,
-      deviceName: navigator.platform || 'OPTRANE Command',
-      platform: navigator.userAgent,
-      appVersion: await appVersion(),
-      client: 'OPTRANE Command',
-    }),
-  });
-  const claim = normalizeClaim(value);
+async function postPairingClaim(code: string): Promise<unknown> {
+  const payload = {
+    code,
+    deviceName: 'OPTRANE Command',
+    platform: navigator.platform || 'desktop',
+    appVersion: await appVersion(),
+    client: 'OPTRANE Command',
+  };
+  let lastError: Error | null = null;
+  for (const variant of pairingCodeVariants(code)) {
+    try {
+      return await legacyJson<unknown>('/pairing/claim', {
+        method: 'POST',
+        body: JSON.stringify({ ...payload, code: variant }),
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !isUnrecognizedPairingCodeError(error.message)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error('Pairing code not recognised');
+}
+
+async function finalizeClaim(
+  claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>,
+  password?: string,
+): Promise<PairingClaimResult> {
+  await savePendingPairing({ deviceToken: claim.deviceToken, user: claim.user });
+
   const direct = mergeClaimWithSession(claim, claim);
   if (direct) return direct;
 
   const session = await fetchPairingSession(claim.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
-  const fromSession = mergeClaimWithSession(claim, session);
+  const mergedUser = claim.user?.email ? claim.user : session.user ?? claim.user;
+  const claimWithUser = { ...claim, user: mergedUser };
+  const fromSession = mergeClaimWithSession(claimWithUser, session);
   if (fromSession) return fromSession;
 
   if (!password?.trim()) {
     throw new Error('Enter your OPTRANE website password to finish pairing. The gateway pairs the device first, then uses your account password to open the desktop session.');
   }
-  return resolveLegacySession(claim, password);
+  return resolveLegacySession(claimWithUser, password);
+}
+
+export async function completePendingPairing(password: string): Promise<PairingClaimResult> {
+  const pending = await loadPendingPairing();
+  if (!pending) {
+    throw new Error('No pending desktop pairing was found on this device. Generate a new pairing code on the OPTRANE website.');
+  }
+  const session = await fetchPairingSession(pending.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
+  const claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>> = {
+    deviceToken: pending.deviceToken,
+    expiresIn: session.expiresIn ?? 3600,
+    user: pending.user?.email ? pending.user : session.user ?? pending.user,
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    tokenType: session.tokenType,
+  };
+  if (!password.trim()) {
+    throw new Error('Enter your OPTRANE website password to finish pairing.');
+  }
+  return finalizeClaim(claim, password);
+}
+
+export async function claimPairingCode(code: string, password?: string): Promise<PairingClaimResult> {
+  try {
+    const value = await postPairingClaim(code);
+    const claim = normalizeClaim(value);
+    return finalizeClaim(claim, password);
+  } catch (error) {
+    if (!(error instanceof Error) || !isUnrecognizedPairingCodeError(error.message) || !password?.trim()) {
+      throw error;
+    }
+    return completePendingPairing(password);
+  }
 }
 
 export async function fetchPairingSession(deviceToken: string): Promise<Partial<PairingClaimResult>> {

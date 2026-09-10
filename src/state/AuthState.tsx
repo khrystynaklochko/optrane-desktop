@@ -6,7 +6,7 @@ import {
   startWebsiteVerification,
   type DesktopAuthStart,
 } from '../api/browserAuth';
-import { claimPairingCode } from '../api/legacyPairing';
+import { claimPairingCode, completePendingPairing } from '../api/legacyPairing';
 import {
   getDesktopSession,
   onDesktopSessionCleared,
@@ -31,6 +31,7 @@ interface AuthStateValue {
   verifyOnWebsite: () => Promise<void>;
   finishWebsiteVerification: (requestId?: string) => Promise<void>;
   claimPairingCode: (code: string, password: string) => Promise<void>;
+  finishPendingPairing: (password: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<{ needsConfirmation: boolean }>;
   startAnonymousDemo: () => Promise<void>;
@@ -106,21 +107,36 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     return () => unlisten?.();
   }, [finishWebsiteVerification]);
 
+  const persistPairingClaim = useCallback(async (claim: Awaited<ReturnType<typeof claimPairingCode>>) => {
+    const verified = await setLegacyPairingSession(claim);
+    setSession(verified);
+    setVerification(null);
+    setVerificationMessage('OPTRANE Command is paired with your account.');
+  }, []);
+
   const claimPairingCodeOnDevice = useCallback(async (code: string, password: string) => {
     setVerificationBusy(true);
     setVerificationMessage('Claiming the OPTRANE pairing code…');
     try {
-      const claim = await claimPairingCode(code, password);
-      const verified = await setLegacyPairingSession(claim);
-      setSession(verified);
-      setVerification(null);
-      setVerificationMessage('OPTRANE Command is paired with your account.');
+      await persistPairingClaim(await claimPairingCode(code, password));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not claim the pairing code';
       setVerificationMessage(message);
       throw error;
     } finally { setVerificationBusy(false); }
-  }, []);
+  }, [persistPairingClaim]);
+
+  const finishPendingPairingOnDevice = useCallback(async (password: string) => {
+    setVerificationBusy(true);
+    setVerificationMessage('Finishing OPTRANE desktop pairing…');
+    try {
+      await persistPairingClaim(await completePendingPairing(password));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not finish desktop pairing';
+      setVerificationMessage(message);
+      throw error;
+    } finally { setVerificationBusy(false); }
+  }, [persistPairingClaim]);
 
   const verifyOnWebsite = useCallback(async () => {
     setVerificationBusy(true);
@@ -158,13 +174,14 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     verifyOnWebsite,
     finishWebsiteVerification,
     claimPairingCode: claimPairingCodeOnDevice,
+    finishPendingPairing: finishPendingPairingOnDevice,
     signIn,
     signUp,
     startAnonymousDemo,
     sendEmailOtp,
     verifyEmailOtp,
     signOut,
-  }), [ready, session, verification, verificationBusy, verificationMessage, verifyOnWebsite, finishWebsiteVerification, claimPairingCodeOnDevice, signIn, signUp, startAnonymousDemo, sendEmailOtp, verifyEmailOtp, signOut]);
+  }), [ready, session, verification, verificationBusy, verificationMessage, verifyOnWebsite, finishWebsiteVerification, claimPairingCodeOnDevice, finishPendingPairingOnDevice, signIn, signUp, startAnonymousDemo, sendEmailOtp, verifyEmailOtp, signOut]);
 
   return <AuthStateContext.Provider value={value}>{children}</AuthStateContext.Provider>;
 }

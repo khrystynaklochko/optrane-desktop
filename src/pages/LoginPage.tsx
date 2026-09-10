@@ -8,6 +8,7 @@ import {
   LEGACY_PAIRING_WEBSITE,
 } from '../api/legacyPairing';
 import { getOptraneApiBase, getOptraneWebBase, setOptraneApiEnvironment } from '../config/optrane';
+import { loadPendingPairing } from '../api/session';
 import { useAuthState } from '../state/AuthState';
 
 function inTauri() {
@@ -19,15 +20,39 @@ export function LoginPage() {
   const codeRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
+  const [pendingPairing, setPendingPairing] = useState(false);
+  const claimingRef = useRef(false);
 
   useEffect(() => {
     setOptraneApiEnvironment('production');
     void probeGatewayPairing().then(() => cancelWebsiteVerification()).catch(() => cancelWebsiteVerification());
+    void loadPendingPairing().then((pending) => setPendingPairing(Boolean(pending))).catch(() => undefined);
     const timer = window.setTimeout(() => codeRef.current?.focus(), 300);
     return () => window.clearTimeout(timer);
   }, []);
 
+  const finishPairing = async () => {
+    if (claimingRef.current || auth.verificationBusy) return;
+    setError('');
+    const password = passwordRef.current?.value ?? '';
+    if (!password.trim()) {
+      setError('Enter the same password you use on the OPTRANE website.');
+      passwordRef.current?.focus();
+      return;
+    }
+    claimingRef.current = true;
+    try {
+      await auth.finishPendingPairing(password);
+      setPendingPairing(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not finish desktop pairing');
+    } finally {
+      claimingRef.current = false;
+    }
+  };
+
   const claim = async () => {
+    if (claimingRef.current || auth.verificationBusy) return;
     setError('');
     const rawCode = codeRef.current?.value ?? '';
     const password = passwordRef.current?.value ?? '';
@@ -44,10 +69,17 @@ export function LoginPage() {
       passwordRef.current?.focus();
       return;
     }
+    claimingRef.current = true;
     try {
       await auth.claimPairingCode(normalizedCode, password);
+      setPendingPairing(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not claim the pairing code');
+      const message = cause instanceof Error ? cause.message : 'Could not claim the pairing code';
+      setError(message);
+      const pending = await loadPendingPairing().catch(() => null);
+      setPendingPairing(Boolean(pending));
+    } finally {
+      claimingRef.current = false;
     }
   };
 
@@ -78,7 +110,7 @@ export function LoginPage() {
       <div className="auth-card">
         <span className="eyebrow">SECURE DESKTOP PAIRING</span>
         <h2>Connect OPTRANE Command</h2>
-        <p className="auth-description">Open <b>{websiteHost}</b>, sign in, and copy the pairing code for this device. Each code works once — generate a new one if you already tried it.</p>
+        <p className="auth-description">Open <b>{websiteHost}</b>, sign in, and copy the pairing code for this device. Each code works once. If the website already shows <b>Command connected</b>, do not enter the code again — use <b>Finish pairing</b> with your website password.</p>
         <button type="button" className="ghost wide" disabled={auth.verificationBusy} onClick={() => void openWebsite()}>Open OPTRANE website</button>
         <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void claim(); }}>
           <label htmlFor="pairing-code">Pairing code</label>
@@ -115,6 +147,9 @@ export function LoginPage() {
           <button type="submit" className="primary wide" disabled={auth.verificationBusy}>
             {auth.verificationBusy ? 'Pairing…' : 'Connect OPTRANE Command'}
           </button>
+          {pendingPairing && <button type="button" className="ghost wide" disabled={auth.verificationBusy} onClick={() => void finishPairing()}>
+            {auth.verificationBusy ? 'Finishing…' : 'Finish pairing (website already connected)'}
+          </button>}
         </form>
         {(auth.verificationMessage || error) && <div className={`auth-message ${error ? 'error' : ''}`}>{error || auth.verificationMessage}</div>}
         <small className="auth-gateway-note">Gateway: {getOptraneApiBase()}</small>

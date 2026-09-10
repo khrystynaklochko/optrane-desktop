@@ -41,6 +41,9 @@ export function explainGatewayFailure(status: number, message: string): string {
   if (status === 410 && /expired/i.test(message)) {
     return 'This pairing request expired. Start again from OPTRANE Command.';
   }
+  if (/pairing code not recogni[sz]ed/i.test(message)) {
+    return 'This pairing code was already used or has expired. If the website shows “Command connected”, enter your website password and click Finish pairing — do not reuse the code. Otherwise generate a new code on the website.';
+  }
   return message;
 }
 
