@@ -187,7 +187,24 @@ async function resolveLegacySession(claim: Omit<PairingClaimResult, 'accessToken
   };
 }
 
-export async function claimPairingCode(code: string, password: string): Promise<PairingClaimResult> {
+function mergeClaimWithSession(
+  claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>,
+  session: Partial<PairingClaimResult>,
+): PairingClaimResult | null {
+  const accessToken = session.accessToken ?? claim.accessToken;
+  const refreshToken = session.refreshToken ?? claim.refreshToken;
+  if (!accessToken || !refreshToken) return null;
+  return {
+    deviceToken: claim.deviceToken,
+    accessToken,
+    refreshToken,
+    expiresIn: session.expiresIn ?? claim.expiresIn ?? 3600,
+    tokenType: session.tokenType ?? claim.tokenType,
+    user: session.user ?? claim.user,
+  };
+}
+
+export async function claimPairingCode(code: string, password?: string): Promise<PairingClaimResult> {
   const normalized = normalizePairingCode(code);
   const value = await legacyJson<unknown>('/pairing/claim', {
     method: 'POST',
@@ -200,7 +217,16 @@ export async function claimPairingCode(code: string, password: string): Promise<
     }),
   });
   const claim = normalizeClaim(value);
-  return resolveLegacySession(claim, password);
+  const direct = mergeClaimWithSession(claim, claim);
+  if (direct) return direct;
+
+  const session = await fetchPairingSession(claim.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
+  const fromSession = mergeClaimWithSession(claim, session);
+  if (fromSession) return fromSession;
+
+  if (password?.trim()) return resolveLegacySession(claim, password);
+
+  throw new Error('This pairing code was accepted, but the gateway did not return a desktop session yet. Generate a fresh code on the OPTRANE website and try again.');
 }
 
 export async function fetchPairingSession(deviceToken: string): Promise<Partial<PairingClaimResult>> {

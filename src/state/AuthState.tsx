@@ -6,7 +6,7 @@ import {
   startWebsiteVerification,
   type DesktopAuthStart,
 } from '../api/browserAuth';
-import { claimPairingCode, signInWithSupabasePassword } from '../api/legacyPairing';
+import { claimPairingCode } from '../api/legacyPairing';
 import {
   getDesktopSession,
   onDesktopSessionCleared,
@@ -30,8 +30,7 @@ interface AuthStateValue {
   verificationMessage: string;
   verifyOnWebsite: () => Promise<void>;
   finishWebsiteVerification: (requestId?: string) => Promise<void>;
-  claimPairingCode: (code: string, password: string) => Promise<void>;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
+  claimPairingCode: (code: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<{ needsConfirmation: boolean }>;
   startAnonymousDemo: () => Promise<void>;
@@ -107,39 +106,17 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     return () => unlisten?.();
   }, [finishWebsiteVerification]);
 
-  const claimPairingCodeOnDevice = useCallback(async (code: string, password: string) => {
+  const claimPairingCodeOnDevice = useCallback(async (code: string) => {
     setVerificationBusy(true);
     setVerificationMessage('Claiming the OPTRANE pairing code…');
     try {
-      const claim = await claimPairingCode(code, password);
+      const claim = await claimPairingCode(code);
       const verified = await setLegacyPairingSession(claim);
       setSession(verified);
       setVerification(null);
       setVerificationMessage('OPTRANE Command is paired with your account.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not claim the pairing code';
-      setVerificationMessage(message);
-      throw error;
-    } finally { setVerificationBusy(false); }
-  }, []);
-
-  const signInWithEmail = useCallback(async (email: string, password: string) => {
-    setVerificationBusy(true);
-    setVerificationMessage('Signing in to OPTRANE…');
-    try {
-      const session = await signInWithSupabasePassword(email.trim(), password);
-      const verified = await setDesktopSession({
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        expiresIn: session.expiresIn,
-        tokenType: session.tokenType,
-        user: session.user,
-      });
-      setSession(verified);
-      setVerification(null);
-      setVerificationMessage('Signed in to OPTRANE Command.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not sign in';
       setVerificationMessage(message);
       throw error;
     } finally { setVerificationBusy(false); }
@@ -181,14 +158,13 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     verifyOnWebsite,
     finishWebsiteVerification,
     claimPairingCode: claimPairingCodeOnDevice,
-    signInWithEmail,
     signIn,
     signUp,
     startAnonymousDemo,
     sendEmailOtp,
     verifyEmailOtp,
     signOut,
-  }), [ready, session, verification, verificationBusy, verificationMessage, verifyOnWebsite, finishWebsiteVerification, claimPairingCodeOnDevice, signInWithEmail, signIn, signUp, startAnonymousDemo, sendEmailOtp, verifyEmailOtp, signOut]);
+  }), [ready, session, verification, verificationBusy, verificationMessage, verifyOnWebsite, finishWebsiteVerification, claimPairingCodeOnDevice, signIn, signUp, startAnonymousDemo, sendEmailOtp, verifyEmailOtp, signOut]);
 
   return <AuthStateContext.Provider value={value}>{children}</AuthStateContext.Provider>;
 }
