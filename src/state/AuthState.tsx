@@ -79,10 +79,10 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     let alive = true;
     void validateDesktopSession().then((validated) => {
       if (!alive) return;
-      setSession(validated);
+      setSession((current) => current ?? validated);
       setReady(true);
     }).catch(() => {
-      if (alive) { setSession(null); setReady(true); }
+      if (alive) setReady(true);
     });
     return () => { alive = false; };
   }, []);

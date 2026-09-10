@@ -157,6 +157,15 @@ export async function setLegacyPairingSession(claim: PairingClaimResult): Promis
   await clearPendingPairing();
   await persistDeviceToken(claim.deviceToken);
   startPairingHeartbeat(claim.deviceToken);
+  if (claim.user?.id && claim.accessToken && claim.refreshToken) {
+    current = {
+      accessToken: claim.accessToken,
+      refreshToken: claim.refreshToken,
+      expiresAt: Date.now() + Math.max(30, Number(claim.expiresIn || 3600)) * 1000,
+      tokenType: claim.tokenType ?? 'bearer',
+      user: claim.user,
+    };
+  }
   return setDesktopSession({
     accessToken: claim.accessToken,
     refreshToken: claim.refreshToken,
@@ -263,6 +272,10 @@ export async function setDesktopSession(input: {
     } catch {
       user = input.user?.id ? input.user : user;
     }
+  }
+  if (!user?.id) {
+    const pending = await loadPendingPairing();
+    if (pending?.user?.id) user = pending.user;
   }
   if (!user?.id) throw new Error('OPTRANE did not receive a valid account identity for this desktop session.');
   const value: DesktopSession = {
@@ -374,9 +387,24 @@ async function refreshLegacyPairingSession(stored: DesktopSession, token: string
 }
 
 export async function validateDesktopSession(): Promise<DesktopSession | null> {
-  const session = await loadDesktopSession();
-  if (!session) return null;
+  let session = await loadDesktopSession();
   const token = await loadDeviceToken();
+
+  if (!session && token) {
+    try {
+      const pending = await loadPendingPairing();
+      const exchanged = await exchangePairingToken(token, pending?.user);
+      return setLegacyPairingSession(exchanged);
+    } catch { /* fall through */ }
+    return null;
+  }
+
+  if (!session) return null;
+
+  if (session.expiresAt - Date.now() > SESSION_REFRESH_LEAD_MS && session.user?.id) {
+    return session;
+  }
+
   if (token) {
     const legacy = await refreshLegacyPairingSession(session, token);
     if (legacy) return legacy;
@@ -388,6 +416,6 @@ export async function validateDesktopSession(): Promise<DesktopSession | null> {
     await persist(validated);
     return validated;
   } catch {
-    return session;
+    return (await loadDesktopSession()) ?? session;
   }
 }

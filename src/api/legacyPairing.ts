@@ -294,8 +294,27 @@ export async function exchangePairingToken(deviceToken: string, userHint?: Deskt
     method: 'POST',
     body: '{}',
   }, deviceToken);
+  const record = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const resolvedDeviceToken = typeof record.deviceToken === 'string'
+    ? record.deviceToken
+    : typeof record.device_token === 'string'
+      ? record.device_token
+      : deviceToken;
+  try {
+    const claim = normalizeClaim(value, userHint);
+    if (claim.accessToken && claim.refreshToken) {
+      return {
+        deviceToken: resolvedDeviceToken,
+        accessToken: claim.accessToken,
+        refreshToken: claim.refreshToken,
+        expiresIn: claim.expiresIn ?? 3600,
+        tokenType: claim.tokenType,
+        user: claim.user ?? userHint,
+      };
+    }
+  } catch { /* partial token payload */ }
   const exchanged = normalizeSessionRefresh(value);
-  const session = mergePairingExchange(deviceToken, exchanged, userHint);
+  const session = mergePairingExchange(resolvedDeviceToken, exchanged, userHint);
   if (!session) {
     throw new Error('The gateway did not return a desktop session for this paired device.');
   }
