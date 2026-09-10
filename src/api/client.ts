@@ -80,6 +80,10 @@ function normalizeUploadedScript(value: any, productionId: string, kind: string,
   };
 }
 
+export function usesHostedGateway() {
+  return /lovable\.app/i.test(apiBase());
+}
+
 function usesLegacyMultipartUpload() {
   return /localhost|127\.0\.0\.1|:54321|:8000|:1420/i.test(apiBase());
 }
@@ -214,31 +218,51 @@ function normalizeProduction(value: any): ProductionSummary {
 
 
 
+function normalizeAnalysisStatus(status: unknown): AnalysisResult['status'] {
+  const normalized = String(status ?? '').toUpperCase();
+  if (normalized === 'SUCCEEDED' || normalized === 'COMPLETED' || normalized === 'COMPLETE') return 'COMPLETE';
+  if (normalized === 'FAILED' || normalized === 'ERROR') return 'FAILED';
+  if (normalized === 'RUNNING' || normalized === 'IN_PROGRESS' || normalized === 'PROCESSING') return 'RUNNING';
+  return (status as AnalysisResult['status']) ?? 'RUNNING';
+}
+
+function normalizeAnalysisSeverity(severity: unknown): AnalysisResult['impacts'][number]['severity'] {
+  const normalized = String(severity ?? 'medium').toUpperCase();
+  if (normalized === 'MEDIUM') return 'WATCH';
+  if (normalized === 'LOW') return 'WATCH';
+  return normalized as AnalysisResult['impacts'][number]['severity'];
+}
+
 function normalizeAnalysis(value: any): AnalysisResult {
+  const analysis = value?.analysis && typeof value.analysis === 'object' ? value.analysis : value;
+  const changes = value?.changes ?? analysis?.changes ?? value?.script_changes ?? [];
+  const impacts = value?.findings ?? value?.impacts ?? analysis?.findings ?? value?.impact_findings ?? [];
   return {
-    analysisId: value.analysisId ?? value.analysis_id ?? value.id,
-    status: value.status === 'COMPLETED' ? 'COMPLETE' : value.status,
-    revisionVersion: Number(value.revisionVersion ?? value.revision_version ?? value.to_script_version ?? 0),
-    changes: (value.changes ?? value.script_changes ?? []).map((item: any) => ({
+    analysisId: analysis.analysisId ?? analysis.analysis_id ?? analysis.id ?? value.analysisId ?? value.analysis_id,
+    status: normalizeAnalysisStatus(analysis.status ?? value.status),
+    revisionVersion: Number(analysis.revisionVersion ?? analysis.revision_version ?? analysis.to_script_version ?? value.revision_version ?? 0),
+    changes: changes.map((item: any) => ({
       id: item.id,
       scene: String(item.scene ?? item.scene_id ?? item.scene_number ?? ''),
       type: item.type ?? item.change_type,
-      category: item.category ?? '',
-      label: item.label ?? item.newValue ?? item.new_value ?? item.description ?? item.category ?? item.change_type,
+      category: item.category ?? item.change_type ?? '',
+      label: item.label ?? item.summary ?? item.newValue ?? item.new_value ?? item.description ?? item.change_type ?? 'Change',
       ignored: item.ignored ?? false,
     })),
-    impacts: (value.impacts ?? value.impact_findings ?? value.findings ?? []).map((item: any) => ({
+    impacts: impacts.map((item: any) => ({
       id: item.id,
-      category: item.category,
-      severity: item.severity === 'MEDIUM' ? 'WATCH' : item.severity,
+      category: item.category ?? item.domain ?? 'Impact',
+      severity: normalizeAnalysisSeverity(item.severity),
       rawSeverity: item.rawSeverity ?? item.raw_severity ?? item.severity,
-      status: item.status,
-      reason: item.reason,
-      evidence: typeof item.evidence === 'string' ? item.evidence : (item.evidence?.summary ?? item.evidence_summary ?? ''),
+      status: item.status ?? 'OPEN',
+      reason: item.reason ?? item.summary ?? '',
+      evidence: typeof item.evidence === 'string'
+        ? item.evidence
+        : (item.evidence?.summary ?? item.evidence_summary ?? item.summary ?? ''),
       evidenceRefs: item.evidenceRefs ?? item.evidence_refs,
     })),
-    readinessBefore: Number(value.readinessBefore ?? value.readiness_before ?? 0),
-    readinessAfter: Number(value.readinessAfter ?? value.readiness_after ?? 0),
+    readinessBefore: Number(analysis.readinessBefore ?? analysis.readiness_before ?? value.readiness_before ?? 0),
+    readinessAfter: Number(analysis.readinessAfter ?? analysis.readiness_after ?? value.readiness_after ?? 0),
   };
 }
 
@@ -637,7 +661,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ productionId, production_id: productionId, revisionVersion: version, revision_version: version }),
   }).then((value: any) => ({ analysisId: value.analysisId ?? value.analysis_id ?? value.jobId ?? value.job_id ?? value.id, status: value.status })),
-  getAnalysis: (_productionId: string, analysisId: string) => request<any>(`/analyses/${analysisId}`).then(normalizeAnalysis),
+  getAnalysis: (_productionId: string, analysisId: string) => request<any>(`/analyses/${analysisId}`).then((value) => normalizeAnalysis(value)),
   getRecoveryPlans: async (_productionId: string, analysisId: string) => {
     const value = await request<any>(`/analyses/${analysisId}`);
     const plans = value.recoveryPlans ?? value.recovery_plans ?? value.plans ?? value.data?.recoveryPlans ?? [];
