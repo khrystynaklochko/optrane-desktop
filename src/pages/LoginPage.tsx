@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { cancelWebsiteVerification } from '../api/browserAuth';
 import { probeGatewayPairing } from '../api/gateway';
@@ -16,25 +16,32 @@ function inTauri() {
 
 export function LoginPage() {
   const auth = useAuthState();
+  const codeRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
-  const [pairingCode, setPairingCode] = useState('');
-  const [password, setPassword] = useState('');
 
   useEffect(() => {
     setOptraneApiEnvironment('production');
     void probeGatewayPairing().then(() => cancelWebsiteVerification()).catch(() => cancelWebsiteVerification());
+    const timer = window.setTimeout(() => codeRef.current?.focus(), 300);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const claim = async () => {
     setError('');
-    const normalizedCode = formatPairingCodeInput(pairingCode);
-    setPairingCode(normalizedCode);
+    const rawCode = codeRef.current?.value ?? '';
+    const password = passwordRef.current?.value ?? '';
+    const normalizedCode = formatPairingCodeInput(rawCode);
+    if (codeRef.current) codeRef.current.value = normalizedCode;
+
     if (!isCompletePairingCode(normalizedCode)) {
       setError('Enter the full pairing code from the website (format XXXX-XXXX).');
+      codeRef.current?.focus();
       return;
     }
-    if (password.length < 8) {
+    if (!password.trim()) {
       setError('Enter the same password you use on the OPTRANE website.');
+      passwordRef.current?.focus();
       return;
     }
     try {
@@ -54,7 +61,6 @@ export function LoginPage() {
   };
 
   const websiteHost = new URL(getOptraneWebBase()).hostname;
-  const canConnect = isCompletePairingCode(pairingCode) && password.length >= 8 && !auth.verificationBusy;
 
   return <div className="auth-shell">
     <section className="auth-visual">
@@ -78,6 +84,7 @@ export function LoginPage() {
           <label htmlFor="pairing-code">Pairing code</label>
           <input
             id="pairing-code"
+            ref={codeRef}
             className="pairing-code-input"
             type="text"
             inputMode="text"
@@ -85,32 +92,30 @@ export function LoginPage() {
             autoCorrect="off"
             autoCapitalize="characters"
             spellCheck={false}
-            autoFocus
-            value={pairingCode}
-            placeholder="JF6F-6828"
+            defaultValue=""
+            placeholder="XXXX-XXXX"
             disabled={auth.verificationBusy}
-            onChange={(event) => setPairingCode(event.target.value.toUpperCase())}
-            onBlur={() => setPairingCode((current) => formatPairingCodeInput(current))}
+            onBlur={(event) => { event.currentTarget.value = formatPairingCodeInput(event.currentTarget.value); }}
             onPaste={(event) => {
               event.preventDefault();
-              setPairingCode(formatPairingCodeInput(event.clipboardData.getData('text')));
+              const formatted = formatPairingCodeInput(event.clipboardData.getData('text'));
+              if (codeRef.current) codeRef.current.value = formatted;
             }}
           />
           <label htmlFor="pair-password">Website password</label>
           <input
             id="pair-password"
+            ref={passwordRef}
             type="password"
             autoComplete="current-password"
-            value={password}
+            defaultValue=""
             placeholder="Same password as the OPTRANE website"
             disabled={auth.verificationBusy}
-            onChange={(event) => setPassword(event.target.value)}
           />
-          <button type="submit" className="primary wide" disabled={!canConnect}>{auth.verificationBusy ? 'Pairing…' : 'Connect OPTRANE Command'}</button>
+          <button type="submit" className="primary wide" disabled={auth.verificationBusy}>
+            {auth.verificationBusy ? 'Pairing…' : 'Connect OPTRANE Command'}
+          </button>
         </form>
-        {!canConnect && pairingCode.trim() && !auth.verificationBusy && (
-          <small className="auth-hint">Enter the full pairing code and your website password to enable Connect.</small>
-        )}
         {(auth.verificationMessage || error) && <div className={`auth-message ${error ? 'error' : ''}`}>{error || auth.verificationMessage}</div>}
         <small className="auth-gateway-note">Gateway: {getOptraneApiBase()}</small>
         <small className="auth-security">The device token is stored in the OS keychain. The desktop never receives Parallel, Google Cloud, ClickHouse, MCP, or governance service credentials.</small>
