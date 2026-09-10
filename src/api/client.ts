@@ -4,7 +4,7 @@ import type {
   ResearchBrief, ResearchRisk, ResearchSource, ScriptChange,
 } from '../types/optrane';
 import { getOptraneApiBase } from '../config/optrane';
-import { publicGatewayHeaders } from './gateway';
+import { explainGatewayFailure, publicGatewayHeaders } from './gateway';
 import { optraneFetch } from './optraneFetch';
 import { ensureAccessToken, loadDeviceToken, refreshDesktopSession } from './session';
 
@@ -47,7 +47,9 @@ async function parseError(response: Response, path: string): Promise<ApiError> {
     if (typeof body.error === 'string') message = body.error;
     else message = body.error?.message ?? body.detail ?? message;
     code = typeof body.error === 'object' ? body.error?.code : body.code;
-    if (response.status === 429) {
+    if (response.status === 401) {
+      message = explainGatewayFailure(401, message);
+    } else if (response.status === 429) {
       message = 'Research rate limit reached (20 requests/minute). Wait a moment and try again.';
     } else if (response.status === 403 && message === `${response.status} ${response.statusText}`) {
       message = 'You do not have permission for this production action.';

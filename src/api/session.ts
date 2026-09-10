@@ -263,19 +263,16 @@ export async function setDesktopSession(input: {
   tokenType?: string;
   user?: DesktopUser;
 }): Promise<DesktopSession> {
-  let user = input.user?.id ? input.user : undefined;
-  if (!user?.email) {
-    try {
-      user = await gatewayJson<DesktopUser>('/auth/me', {
-        headers: { Authorization: `Bearer ${input.accessToken}` },
-      });
-    } catch {
-      user = input.user?.id ? input.user : user;
-    }
+  if (!input.accessToken?.trim() || !input.refreshToken?.trim()) {
+    throw new Error('OPTRANE did not receive valid session credentials. Finish pairing with your website password.');
   }
-  if (!user?.id) {
-    const pending = await loadPendingPairing();
-    if (pending?.user?.id) user = pending.user;
+  let user: DesktopUser | undefined;
+  try {
+    user = await gatewayJson<DesktopUser>('/auth/me', {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+    });
+  } catch {
+    throw new Error('Your OPTRANE account session is not authenticated for API calls. Disconnect, then pair again with your website password.');
   }
   if (!user?.id) throw new Error('OPTRANE did not receive a valid account identity for this desktop session.');
   const value: DesktopSession = {
@@ -416,7 +413,12 @@ export async function validateDesktopSession(): Promise<DesktopSession | null> {
   if (!session) return null;
 
   if (session.expiresAt - Date.now() > SESSION_REFRESH_LEAD_MS && session.user?.id) {
-    return session;
+    try {
+      await gatewayJson<DesktopUser>('/auth/me', {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+      });
+      return session;
+    } catch { /* refresh below */ }
   }
 
   if (token) {

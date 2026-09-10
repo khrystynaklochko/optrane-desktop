@@ -5,9 +5,11 @@ import { useOptraneState } from '../state/OptraneState';
 import type { AgentDataClass, AgentTool, AgentType, DataAccess, ProductionAgent, RegisterAgentInput } from '../types/optrane';
 
 const types: AgentType[] = ['DIRECTOR','BREAKDOWN','REVISION','IMPACT','RECOVERY','SCHEDULE','RISK','CUSTOM'];
+const placeholderProductionIds = new Set(['bootstrap', 'nightfall-demo']);
 
 export function AgentRegisterPage({ onToast }: { onToast: (message: string) => void }) {
   const state = useOptraneState();
+  const productionReady = Boolean(state.activeProductionId) && !placeholderProductionIds.has(state.activeProductionId);
   const [draft, setDraft] = useState<RegisterAgentInput>(() => templateFor('IMPACT'));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ProductionAgent | null>(null);
@@ -21,6 +23,11 @@ export function AgentRegisterPage({ onToast }: { onToast: (message: string) => v
   const setDataAccess = (dataClass: string, access: DataAccess) => setDraft((current) => ({ ...current, dataClasses: current.dataClasses.map((item): AgentDataClass => item.dataClass === dataClass ? { ...item, access } : item) }));
 
   const register = async () => {
+    if (!productionReady) {
+      onToast('Create or select a production first. Agent registration requires an authenticated production workspace.');
+      state.setScreen('new-production');
+      return;
+    }
     if (!draft.name.trim() || !draft.purpose.trim()) { onToast('Name and purpose are required.'); return; }
     if (!draft.capabilities.length) { onToast('Choose at least one capability.'); return; }
     if (draft.selfImprovement.enabled && (draft.selfImprovement.budget.perIteration > draft.selfImprovement.budget.daily || draft.selfImprovement.budget.maxIterationsPerRun < 1)) {
@@ -54,6 +61,8 @@ export function AgentRegisterPage({ onToast }: { onToast: (message: string) => v
   return <section className="page register-agent-page">
     <div className="page-head"><div><span className="eyebrow">NEW GOVERNED IDENTITY</span><h1>Register Governed Agent</h1><p>The desktop submits an OPTRANE agent specification only. Identity provisioning, peer authentication, policies and provider API calls happen entirely on the Lovable backend.</p></div><button className="ghost" onClick={() => state.setScreen('agents')}>Cancel</button></div>
 
+    {!productionReady && <div className="panel auth-message error">No production workspace is active yet. Create a production first, then register agents against that workspace.</div>}
+
     <div className="register-layout">
       <div className="register-main">
         <div className="panel form-section"><div className="section-number">01</div><div className="section-title"><h3>Identity</h3><span>Name, runtime and narrow operational purpose.</span></div>
@@ -85,7 +94,7 @@ export function AgentRegisterPage({ onToast }: { onToast: (message: string) => v
           <h4>Execution budget</h4><label className="budget-field">Per run <div><span>$</span><input type="number" min="0" step="0.1" value={draft.budget.perRun} onChange={(e) => setDraft({ ...draft, budget: { ...draft.budget, perRun: Number(e.target.value) } })}/></div></label><label className="budget-field">Daily <div><span>$</span><input type="number" min="0" step="1" value={draft.budget.daily} onChange={(e) => setDraft({ ...draft, budget: { ...draft.budget, daily: Number(e.target.value) } })}/></div></label>
           <h4>Improvement budget</h4><div className="budget-row"><span>Per iteration</span><b>${draft.selfImprovement.budget.perIteration}</b></div><div className="budget-row"><span>Daily cap</span><b>${draft.selfImprovement.budget.daily}</b></div><div className="budget-row"><span>Iterations / run</span><b>{draft.selfImprovement.budget.maxIterationsPerRun}</b></div>
           <div className="guardrail-note"><b>Hard server guardrail</b><span>Secrets denied · unknown tools denied · ClickHouse MCP read only · self-improvement cannot change authority or increase budgets · promotion requires a human.</span></div>
-          <button className="primary wide" disabled={busy} onClick={() => void register()}>{busy ? 'Provisioning governed identity…' : 'Register agent'}</button>
+          <button className="primary wide" disabled={busy || !productionReady} onClick={() => void register()}>{busy ? 'Provisioning governed identity…' : 'Register agent'}</button>
         </div>
       </aside>
     </div>
