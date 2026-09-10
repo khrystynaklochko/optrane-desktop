@@ -1,8 +1,12 @@
-import { fetchPairingSession, sendPairingHeartbeat, type PairingClaimResult } from './legacyPairing';
+import { exchangePairingToken, fetchPairingSession, sendPairingHeartbeat, type PairingClaimResult } from './legacyPairing';
 import { publicGatewayHeaders } from './gateway';
 import { optraneFetch } from './optraneFetch';
 import { secureAuthStorage } from './secureStorage';
-import { getOptraneApiBase } from '../config/optrane';
+import {
+  getOptraneApiBase,
+  OPTRANE_GATEWAY_PUBLISHABLE_KEY,
+  OPTRANE_SUPABASE_URL,
+} from '../config/optrane';
 
 export interface DesktopUser {
   id: string;
@@ -32,7 +36,9 @@ let current: DesktopSession | null = null;
 let deviceToken: string | null = null;
 let refreshPromise: Promise<DesktopSession> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let sessionRefreshTimer: ReturnType<typeof setInterval> | null = null;
 const sessionClearedListeners = new Set<() => void>();
+const SESSION_REFRESH_LEAD_MS = 5 * 60_000;
 
 export function onDesktopSessionCleared(listener: () => void): () => void {
   sessionClearedListeners.add(listener);
@@ -71,11 +77,34 @@ function stopPairingHeartbeat() {
   }
 }
 
+function stopSessionRefresh() {
+  if (sessionRefreshTimer) {
+    clearInterval(sessionRefreshTimer);
+    sessionRefreshTimer = null;
+  }
+}
+
+function startSessionRefresh() {
+  stopSessionRefresh();
+  sessionRefreshTimer = setInterval(() => {
+    void (async () => {
+      const session = await loadDesktopSession();
+      const token = await loadDeviceToken();
+      if (!session || !token) return;
+      if (session.expiresAt - Date.now() > SESSION_REFRESH_LEAD_MS) return;
+      try {
+        await refreshSessionFromDeviceToken(session, token);
+      } catch { /* keep current session until explicit disconnect */ }
+    })();
+  }, 60_000);
+}
+
 function startPairingHeartbeat(token: string) {
   stopPairingHeartbeat();
   heartbeatTimer = setInterval(() => {
     void sendPairingHeartbeat(token).catch(() => undefined);
   }, 5 * 60_000);
+  startSessionRefresh();
 }
 
 async function persistDeviceToken(value: string | null) {
@@ -154,6 +183,70 @@ export async function loadDesktopSession(): Promise<DesktopSession | null> {
   }
 }
 
+function normalizeGatewayUser(value: unknown): DesktopUser | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  const id = record.id ?? record.userId ?? record.user_id;
+  if (typeof id !== 'string') return undefined;
+  return {
+    id,
+    email: typeof record.email === 'string' ? record.email : undefined,
+    displayName: typeof record.displayName === 'string'
+      ? record.displayName
+      : typeof record.display_name === 'string'
+        ? record.display_name
+        : undefined,
+    emailVerified: Boolean(record.emailVerified ?? record.email_verified),
+  };
+}
+
+async function refreshSessionFromDeviceToken(session: DesktopSession, deviceToken: string): Promise<DesktopSession> {
+  const exchanged = await exchangePairingToken(deviceToken, session.user);
+  return setDesktopSession({
+    accessToken: exchanged.accessToken,
+    refreshToken: exchanged.refreshToken,
+    expiresIn: exchanged.expiresIn,
+    tokenType: exchanged.tokenType,
+    user: exchanged.user ?? session.user,
+  });
+}
+
+async function refreshSupabaseSession(session: DesktopSession): Promise<DesktopSession> {
+  const response = await optraneFetch(`${OPTRANE_SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: OPTRANE_GATEWAY_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${OPTRANE_GATEWAY_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify({ refresh_token: session.refreshToken }),
+  });
+  if (!response.ok) {
+    let message = 'Could not refresh the OPTRANE session.';
+    try {
+      const body = await response.json() as { error_description?: string; msg?: string; error?: string };
+      message = body.error_description ?? body.msg ?? body.error ?? message;
+    } catch { /* keep default */ }
+    throw new Error(message);
+  }
+  const body = await response.json() as Record<string, unknown>;
+  const accessToken = body.access_token;
+  const refreshToken = body.refresh_token;
+  if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
+    throw new Error('Supabase did not return a refreshed desktop session.');
+  }
+  const user = body.user && typeof body.user === 'object'
+    ? normalizeGatewayUser(body.user)
+    : session.user;
+  return setDesktopSession({
+    accessToken,
+    refreshToken,
+    expiresIn: Number(body.expires_in ?? 3600),
+    tokenType: typeof body.token_type === 'string' ? body.token_type : session.tokenType,
+    user,
+  });
+}
+
 export async function setDesktopSession(input: {
   accessToken: string;
   refreshToken: string;
@@ -161,9 +254,17 @@ export async function setDesktopSession(input: {
   tokenType?: string;
   user?: DesktopUser;
 }): Promise<DesktopSession> {
-  const user = input.user?.id ? input.user : await gatewayJson<DesktopUser>('/auth/me', {
-    headers: { Authorization: `Bearer ${input.accessToken}` },
-  });
+  let user = input.user?.id ? input.user : undefined;
+  if (!user?.email) {
+    try {
+      user = await gatewayJson<DesktopUser>('/auth/me', {
+        headers: { Authorization: `Bearer ${input.accessToken}` },
+      });
+    } catch {
+      user = input.user?.id ? input.user : user;
+    }
+  }
+  if (!user?.id) throw new Error('OPTRANE did not receive a valid account identity for this desktop session.');
   const value: DesktopSession = {
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
@@ -180,26 +281,46 @@ export async function getDesktopSession(): Promise<DesktopSession | null> {
 }
 
 async function refreshSession(session: DesktopSession): Promise<DesktopSession> {
-  const refreshed = await gatewayJson<any>('/auth/refresh', {
-    method: 'POST',
-    body: JSON.stringify({ refreshToken: session.refreshToken }),
-  });
-  return setDesktopSession({
-    accessToken: refreshed.accessToken ?? refreshed.access_token,
-    refreshToken: refreshed.refreshToken ?? refreshed.refresh_token ?? session.refreshToken,
-    expiresIn: Number(refreshed.expiresIn ?? refreshed.expires_in ?? 3600),
-    tokenType: refreshed.tokenType ?? refreshed.token_type,
-    user: session.user,
-  });
+  const deviceToken = await loadDeviceToken();
+  if (deviceToken) {
+    try {
+      return await refreshSessionFromDeviceToken(session, deviceToken);
+    } catch { /* fall through */ }
+  }
+  try {
+    const refreshed = await gatewayJson<any>('/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: session.refreshToken }),
+    });
+    return setDesktopSession({
+      accessToken: refreshed.accessToken ?? refreshed.access_token,
+      refreshToken: refreshed.refreshToken ?? refreshed.refresh_token ?? session.refreshToken,
+      expiresIn: Number(refreshed.expiresIn ?? refreshed.expires_in ?? 3600),
+      tokenType: refreshed.tokenType ?? refreshed.token_type,
+      user: session.user,
+    });
+  } catch {
+    return refreshSupabaseSession(session);
+  }
 }
 
 export async function ensureAccessToken(): Promise<string> {
   const session = await loadDesktopSession();
   if (!session) throw new Error('No OPTRANE desktop session. Verify your account on the OPTRANE website.');
-  // Refresh through OPTRANE, never directly against the identity provider.
-  if (session.expiresAt - Date.now() > 90_000) return session.accessToken;
+  if (session.expiresAt - Date.now() > SESSION_REFRESH_LEAD_MS) return session.accessToken;
   if (!refreshPromise) refreshPromise = refreshSession(session).finally(() => { refreshPromise = null; });
-  return (await refreshPromise).accessToken;
+  try {
+    return (await refreshPromise).accessToken;
+  } catch {
+    const deviceToken = await loadDeviceToken();
+    if (deviceToken) {
+      try {
+        return (await refreshSessionFromDeviceToken(session, deviceToken)).accessToken;
+      } catch { /* fall through */ }
+    }
+    if (session.expiresAt > Date.now()) return session.accessToken;
+    throw new Error('OPTRANE session expired. Use Disconnect, then pair again from the login screen.');
+  }
 }
 
 export async function refreshDesktopSession(): Promise<DesktopSession> {
@@ -211,6 +332,8 @@ export async function refreshDesktopSession(): Promise<DesktopSession> {
 
 export async function clearDesktopSession(): Promise<void> {
   stopPairingHeartbeat();
+  stopSessionRefresh();
+  await clearPendingPairing();
   await persistDeviceToken(null);
   await persist(null);
   sessionClearedListeners.forEach((listener) => listener());
@@ -232,17 +355,21 @@ export async function signOutDesktop(): Promise<void> {
 
 async function refreshLegacyPairingSession(stored: DesktopSession, token: string): Promise<DesktopSession | null> {
   try {
-    const refreshed = await fetchPairingSession(token);
-    if (refreshed.accessToken && refreshed.refreshToken) {
-      return setDesktopSession({
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        expiresIn: refreshed.expiresIn ?? 3600,
-        tokenType: refreshed.tokenType,
-        user: refreshed.user ?? stored.user,
-      });
-    }
-  } catch { /* fall through to bearer refresh */ }
+    return await refreshSessionFromDeviceToken(stored, token);
+  } catch {
+    try {
+      const refreshed = await fetchPairingSession(token);
+      if (refreshed.accessToken && refreshed.refreshToken) {
+        return setDesktopSession({
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresIn: refreshed.expiresIn ?? 3600,
+          tokenType: refreshed.tokenType,
+          user: refreshed.user ?? stored.user,
+        });
+      }
+    } catch { /* fall through to bearer refresh */ }
+  }
   return null;
 }
 
@@ -261,7 +388,6 @@ export async function validateDesktopSession(): Promise<DesktopSession | null> {
     await persist(validated);
     return validated;
   } catch {
-    await clearDesktopSession();
-    return null;
+    return session;
   }
 }

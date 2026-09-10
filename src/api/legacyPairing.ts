@@ -272,11 +272,45 @@ async function postPairingClaim(code: string): Promise<unknown> {
   throw lastError ?? new Error('Pairing code not recognised');
 }
 
+function mergePairingExchange(
+  deviceToken: string,
+  exchanged: Partial<PairingClaimResult>,
+  hint?: DesktopUser,
+): PairingClaimResult | null {
+  if (!exchanged.accessToken || !exchanged.refreshToken) return null;
+  return {
+    deviceToken,
+    accessToken: exchanged.accessToken,
+    refreshToken: exchanged.refreshToken,
+    expiresIn: exchanged.expiresIn ?? 3600,
+    tokenType: exchanged.tokenType,
+    user: exchanged.user ?? hint,
+  };
+}
+
+/** Swap a saved device key for a fresh gateway session (POST /pairing/token). */
+export async function exchangePairingToken(deviceToken: string, userHint?: DesktopUser): Promise<PairingClaimResult> {
+  const value = await legacyJson<unknown>('/pairing/token', {
+    method: 'POST',
+    body: '{}',
+  }, deviceToken);
+  const exchanged = normalizeSessionRefresh(value);
+  const session = mergePairingExchange(deviceToken, exchanged, userHint);
+  if (!session) {
+    throw new Error('The gateway did not return a desktop session for this paired device.');
+  }
+  return session;
+}
+
 async function finalizeClaim(
   claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>>,
   password?: string,
 ): Promise<PairingClaimResult> {
   await savePendingPairing({ deviceToken: claim.deviceToken, user: claim.user });
+
+  try {
+    return await exchangePairingToken(claim.deviceToken, claim.user);
+  } catch { /* fall through to claim payload / password */ }
 
   const direct = mergeClaimWithSession(claim, claim);
   if (direct) return direct;
@@ -293,11 +327,15 @@ async function finalizeClaim(
   return resolveLegacySession(claimWithUser, password);
 }
 
-export async function completePendingPairing(password: string): Promise<PairingClaimResult> {
+export async function completePendingPairing(password?: string): Promise<PairingClaimResult> {
   const pending = await loadPendingPairing();
   if (!pending) {
     throw new Error('No pending desktop pairing was found on this device. Generate a new pairing code on the OPTRANE website.');
   }
+  try {
+    return await exchangePairingToken(pending.deviceToken, pending.user);
+  } catch { /* fall through */ }
+
   const session = await fetchPairingSession(pending.deviceToken).catch(() => ({} as Partial<PairingClaimResult>));
   const claim: Omit<PairingClaimResult, 'accessToken' | 'refreshToken'> & Partial<Pick<PairingClaimResult, 'accessToken' | 'refreshToken'>> = {
     deviceToken: pending.deviceToken,
@@ -307,7 +345,7 @@ export async function completePendingPairing(password: string): Promise<PairingC
     refreshToken: session.refreshToken,
     tokenType: session.tokenType,
   };
-  if (!password.trim()) {
+  if (!password?.trim()) {
     throw new Error('Enter your OPTRANE website password to finish pairing.');
   }
   return finalizeClaim(claim, password);

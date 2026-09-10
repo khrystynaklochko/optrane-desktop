@@ -42,7 +42,7 @@ The desktop supports two paths against the hosted gateway:
 1. **Pairing code** — create an account on the [hosted site](https://film-sparkle-layer.lovable.app), copy the `XXXX-XXXX` code, then in OPTRANE Command enter the code plus your website password. The app calls `POST /pairing/claim`, stores the device token in the OS keychain, and signs in for a Supabase access token.
 2. **Email sign-in** — email + password directly (same Supabase session the website uses).
 
-On launch the app calls `GET /pairing/session` and sends `POST /pairing/heartbeat` every five minutes. Access tokens live in memory; refresh happens before expiry. On 401 the session is cleared and you return to the pairing screen. Device tokens are sent as `X-OPTRANE-Device-Token`; API calls use `Authorization: Bearer <access token>`.
+On launch the app renews the session with `POST /pairing/token` (device key swap) and sends `POST /pairing/heartbeat` every five minutes. Access tokens refresh automatically before expiry via `/pairing/token`, then `/auth/refresh`, then Supabase. Device tokens are sent as `X-OPTRANE-Device-Token`; API calls use `Authorization: Bearer <access token>`. Use **Disconnect** in the sidebar to sign out.
 
 Optional website deep-link verification (`optrane://auth/callback`) is also supported when the gateway exposes `/desktop-auth/*`.
 

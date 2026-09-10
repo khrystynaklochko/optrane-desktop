@@ -31,7 +31,7 @@ interface AuthStateValue {
   verifyOnWebsite: () => Promise<void>;
   finishWebsiteVerification: (requestId?: string) => Promise<void>;
   claimPairingCode: (code: string, password: string) => Promise<void>;
-  finishPendingPairing: (password: string) => Promise<void>;
+  finishPendingPairing: (password?: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<{ needsConfirmation: boolean }>;
   startAnonymousDemo: () => Promise<void>;
@@ -126,7 +126,7 @@ export function AuthStateProvider({ children }: { children: ReactNode }) {
     } finally { setVerificationBusy(false); }
   }, [persistPairingClaim]);
 
-  const finishPendingPairingOnDevice = useCallback(async (password: string) => {
+  const finishPendingPairingOnDevice = useCallback(async (password?: string) => {
     setVerificationBusy(true);
     setVerificationMessage('Finishing OPTRANE desktop pairing…');
     try {

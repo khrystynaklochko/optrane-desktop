@@ -8,8 +8,11 @@ export function publicGatewayHeaders(extra: Record<string, string> = {}) {
     ...extra,
   };
   if (OPTRANE_GATEWAY_PUBLISHABLE_KEY) {
-    headers.Authorization = `Bearer ${OPTRANE_GATEWAY_PUBLISHABLE_KEY}`;
     headers.apikey = OPTRANE_GATEWAY_PUBLISHABLE_KEY;
+    // Keep caller-supplied user/session JWT; only use publishable key for bootstrap routes.
+    if (!headers.Authorization && !headers.authorization) {
+      headers.Authorization = `Bearer ${OPTRANE_GATEWAY_PUBLISHABLE_KEY}`;
+    }
   }
   return headers;
 }
@@ -33,7 +36,7 @@ export function explainGatewayFailure(status: number, message: string): string {
     return 'The OPTRANE gateway rejected the desktop pairing bootstrap request. The Lovable backend must expose public /desktop-auth routes.';
   }
   if (status === 401 && /invalid or expired token/i.test(message)) {
-    return 'The OPTRANE gateway is not running the desktop pairing backend yet. Redeploy backend/lovable (itrain-api and the /desktop/verify page), then try pairing again.';
+    return 'OPTRANE rejected the desktop session token. Disconnect, pair again, or wait a moment and retry.';
   }
   if (status === 409 && /not approved yet/i.test(message)) {
     return 'Website verification is not approved yet. Sign in on the OPTRANE website and click “Verify OPTRANE Command”.';

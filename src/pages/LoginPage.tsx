@@ -35,14 +35,9 @@ export function LoginPage() {
     if (claimingRef.current || auth.verificationBusy) return;
     setError('');
     const password = passwordRef.current?.value ?? '';
-    if (!password.trim()) {
-      setError('Enter the same password you use on the OPTRANE website.');
-      passwordRef.current?.focus();
-      return;
-    }
     claimingRef.current = true;
     try {
-      await auth.finishPendingPairing(password);
+      await auth.finishPendingPairing(password.trim() || undefined);
       setPendingPairing(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not finish desktop pairing');

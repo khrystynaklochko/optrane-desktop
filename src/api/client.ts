@@ -6,7 +6,7 @@ import type {
 import { getOptraneApiBase } from '../config/optrane';
 import { publicGatewayHeaders } from './gateway';
 import { optraneFetch } from './optraneFetch';
-import { clearDesktopSession, ensureAccessToken, loadDeviceToken, refreshDesktopSession } from './session';
+import { ensureAccessToken, loadDeviceToken, refreshDesktopSession } from './session';
 
 export function apiBase() {
   return getOptraneApiBase();
@@ -70,20 +70,23 @@ function normalizeUploadedScript(value: any, productionId: string, kind: string,
 }
 
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+  const multipart = init?.body instanceof FormData || init?.body instanceof Blob;
+  const headers: Record<string, string> = {
+    ...(multipart ? {} : { 'Content-Type': 'application/json' }),
+    ...(await authHeaders()),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (multipart) delete headers['Content-Type'];
   const response = await optraneFetch(`${apiBase()}${path}`, {
     ...init,
-    headers: {
-      ...(init?.body instanceof FormData || init?.body instanceof Blob ? {} : { 'Content-Type': 'application/json' }),
-      ...(await authHeaders()),
-      ...init?.headers,
-    },
+    headers,
   });
   if (response.status === 401 && !retried) {
     try {
       await refreshDesktopSession();
       return request<T>(path, init, true);
     } catch {
-      await clearDesktopSession();
+      throw await parseError(response, path);
     }
   }
   if (!response.ok) throw await parseError(response, path);
@@ -348,10 +351,14 @@ async function publicRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function authorizedFetch(input: string, init?: RequestInit) {
-  return optraneFetch(input, {
-    ...init,
-    headers: { ...(await authHeaders()), 'x-optrane-client': 'desktop', ...init?.headers },
-  });
+  const multipart = init?.body instanceof FormData || init?.body instanceof Blob;
+  const headers: Record<string, string> = {
+    ...(await authHeaders()),
+    'x-optrane-client': 'desktop',
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (multipart) delete headers['Content-Type'];
+  return optraneFetch(input, { ...init, headers });
 }
 
 async function uploadScriptMultipart(
@@ -362,54 +369,52 @@ async function uploadScriptMultipart(
   signal?: AbortSignal,
   retried = false,
 ): Promise<UploadedScript> {
-  const token = await ensureAccessToken();
-  const deviceToken = await loadDeviceToken();
   const form = new FormData();
   form.append('productionId', productionId);
   form.append('production_id', productionId);
   form.append('kind', kind);
   form.append('file', file, file.name);
 
-  return new Promise<UploadedScript>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${apiBase()}/scripts/upload`);
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.setRequestHeader('x-optrane-client', 'desktop');
-    if (deviceToken) xhr.setRequestHeader('X-OPTRANE-Device-Token', deviceToken);
-    xhr.responseType = 'json';
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100))));
-    };
-    xhr.onerror = () => reject(new Error('Script upload failed before the OPTRANE gateway responded.'));
-    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
-    xhr.onload = () => {
-      void (async () => {
-        const body = xhr.response ?? {};
-        if (xhr.status === 401 && !retried) {
-          try {
-            await refreshDesktopSession();
-            resolve(await uploadScriptMultipart(productionId, file, kind, onProgress, signal, true));
-          } catch {
-            await clearDesktopSession();
-            reject(new ApiError(401, 'Session expired. Sign in again.', '/scripts/upload'));
-          }
-          return;
-        }
-        if (xhr.status < 200 || xhr.status >= 300) {
-          const message = typeof body?.error === 'string'
-            ? body.error
-            : body?.error?.message ?? body?.detail ?? `Upload failed (${xhr.status})`;
-          reject(new ApiError(xhr.status, message, '/scripts/upload', body?.error?.code ?? body?.code));
-          return;
-        }
-        const value = body?.data ?? body;
-        onProgress(100);
-        resolve(normalizeUploadedScript(value, productionId, kind, file.name));
-      })();
-    };
-    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
-    xhr.send(form);
-  });
+  onProgress(8);
+  const headers: Record<string, string> = {
+    ...(await authHeaders()),
+    'x-optrane-client': 'desktop',
+  };
+  delete headers['Content-Type'];
+
+  let response: Response;
+  try {
+    response = await optraneFetch(`${apiBase()}/scripts/upload`, {
+      method: 'POST',
+      headers,
+      body: form,
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new Error('Script upload failed before the OPTRANE gateway responded.');
+  }
+
+  onProgress(85);
+
+  if (response.status === 401 && !retried) {
+    try {
+      await refreshDesktopSession();
+      return uploadScriptMultipart(productionId, file, kind, onProgress, signal, true);
+    } catch {
+      throw new ApiError(401, 'Session expired. Use Disconnect on the sidebar, then pair again.', '/scripts/upload');
+    }
+  }
+
+  if (!response.ok) throw await parseError(response, '/scripts/upload');
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = await response.json() as Record<string, unknown>;
+  } catch { /* empty body */ }
+  const value = (body && typeof body === 'object' && 'data' in body ? body.data : body) as Record<string, unknown>;
+  onProgress(100);
+  return normalizeUploadedScript(value, productionId, kind, file.name);
 }
 
 export async function uploadScriptWithProgress(

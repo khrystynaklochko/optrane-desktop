@@ -210,7 +210,11 @@ function OptraneApplication() {
         <button className={state.screen === 'settings' ? 'active' : ''} onClick={() => state.setScreen('settings')}>Settings</button>
       </nav>
       <div className="sidebar-tools">{isRecordingTestUser(auth.user?.email) && <button className="link-button" onClick={() => state.setScreen('demo-recording')}>Open recording workflow</button>}<button className="link-button" onClick={resetDemo}>Reset NIGHTFALL demo</button></div>
-      <div className="sidebar-foot"><span className={`status-dot ${state.offline ? 'offline' : ''}`} /> {state.offline ? 'Offline snapshot' : 'Lovable backend connected'}<small>{auth.user?.email ?? 'Anonymous session'}</small></div>
+      <div className="sidebar-foot">
+        <span className={`status-dot ${state.offline ? 'offline' : ''}`} /> {state.offline ? 'Offline snapshot' : 'Lovable backend connected'}
+        <small>{auth.user?.email ?? 'Anonymous session'}</small>
+        <button type="button" className="link-button disconnect-button" onClick={() => void auth.signOut().catch((error) => showToast(error instanceof Error ? error.message : 'Could not disconnect'))}>Disconnect</button>
+      </div>
     </aside>
     <main>
       <header className="topbar"><div><span className="eyebrow">ACTIVE PRODUCTION</span><strong>{state.production.title}</strong></div><div className="top-actions"><span>Script v{state.production.currentScriptVersion}</span>{state.connectionState !== 'DISCONNECTED' && <span className={`connection connection-${state.connectionState.toLowerCase()}`}>{state.connectionState}</span>}<button className="ghost" onClick={() => state.setScreen('agents')}>Agents</button><button className="primary compact-button" onClick={() => state.setScreen('revision')}>Analyse revision</button></div></header>
