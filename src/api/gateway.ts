@@ -1,4 +1,5 @@
 import { getOptraneApiBase, OPTRANE_GATEWAY_PUBLISHABLE_KEY } from '../config/optrane';
+import { optraneFetch } from './optraneFetch';
 
 export function publicGatewayHeaders(extra: Record<string, string> = {}) {
   const headers: Record<string, string> = {
@@ -44,7 +45,7 @@ export function explainGatewayFailure(status: number, message: string): string {
 }
 
 export async function publicGatewayJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${getOptraneApiBase()}${path}`, {
+  const response = await optraneFetch(`${getOptraneApiBase()}${path}`, {
     ...init,
     headers: publicGatewayHeaders(init?.headers as Record<string, string> | undefined),
   });
@@ -67,7 +68,7 @@ async function readGatewayErrorBody(response: Response): Promise<string> {
 
 export async function probeGatewayPairing(): Promise<GatewayPairingState> {
   try {
-    const response = await fetch(`${getOptraneApiBase()}/desktop-auth/start`, {
+    const response = await optraneFetch(`${getOptraneApiBase()}/desktop-auth/start`, {
       method: 'POST',
       headers: publicGatewayHeaders(),
       body: JSON.stringify({ callbackUri: 'optrane://auth/callback', client: 'OPTRANE Command' }),
@@ -77,7 +78,7 @@ export async function probeGatewayPairing(): Promise<GatewayPairingState> {
     const message = await readGatewayErrorBody(response);
     if (/Missing bearer token/i.test(message)) return 'bootstrap-blocked';
 
-    const claimResponse = await fetch(`${getOptraneApiBase()}/pairing/claim`, {
+    const claimResponse = await optraneFetch(`${getOptraneApiBase()}/pairing/claim`, {
       method: 'POST',
       headers: publicGatewayHeaders(),
       body: JSON.stringify({ code: '0000-0000', deviceName: 'probe', platform: 'probe' }),

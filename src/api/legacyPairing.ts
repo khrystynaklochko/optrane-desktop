@@ -1,5 +1,6 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { publicGatewayHeaders, readGatewayError } from './gateway';
+import { optraneFetch } from './optraneFetch';
 import {
   getOptraneApiBase,
   OPTRANE_GATEWAY_PUBLISHABLE_KEY,
@@ -122,7 +123,7 @@ function normalizeSessionRefresh(value: unknown): Partial<PairingClaimResult> {
 async function gatewayFetch(path: string, init?: RequestInit, deviceToken?: string): Promise<Response> {
   const url = `${getOptraneApiBase()}${path}`;
   try {
-    return await fetch(url, {
+    return await optraneFetch(url, {
       ...init,
       headers: publicGatewayHeaders({
         ...(deviceToken ? { 'X-OPTRANE-Device-Token': deviceToken } : {}),
@@ -148,7 +149,7 @@ export async function signInWithSupabasePassword(email: string, password: string
   const url = `${OPTRANE_SUPABASE_URL}/auth/v1/token?grant_type=password`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await optraneFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

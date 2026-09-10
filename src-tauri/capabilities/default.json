@@ -9,6 +9,18 @@
     "core:default",
     "deep-link:default",
     "notification:default",
-    "opener:default"
+    "opener:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://film-sparkle-layer.lovable.app/**" },
+        { "url": "https://*.lovable.app/**" },
+        { "url": "https://*.supabase.co/**" },
+        { "url": "https://*.run.app/**" },
+        { "url": "http://localhost:1420/**" },
+        { "url": "http://localhost:8000/**" },
+        { "url": "http://localhost:54321/**" }
+      ]
+    }
   ]
 }

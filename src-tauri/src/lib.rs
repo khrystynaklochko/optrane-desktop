@@ -41,6 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![credential_get, credential_set, credential_delete])
         .setup(|app| {
             let new_production = MenuItemBuilder::with_id("new-production", "New Production")

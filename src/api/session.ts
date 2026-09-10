@@ -1,5 +1,6 @@
 import { fetchPairingSession, sendPairingHeartbeat, type PairingClaimResult } from './legacyPairing';
 import { publicGatewayHeaders } from './gateway';
+import { optraneFetch } from './optraneFetch';
 import { secureAuthStorage } from './secureStorage';
 import { getOptraneApiBase } from '../config/optrane';
 
@@ -37,7 +38,7 @@ function unwrap<T>(body: any): T {
 
 async function gatewayJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await loadDeviceToken();
-  const response = await fetch(`${getOptraneApiBase()}${path}`, {
+  const response = await optraneFetch(`${getOptraneApiBase()}${path}`, {
     ...init,
     headers: publicGatewayHeaders({
       ...(token ? { 'X-OPTRANE-Device-Token': token } : {}),

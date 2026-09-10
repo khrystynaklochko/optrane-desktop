@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:8000 http://localhost:54321 ws://localhost:1420 https://*.supabase.co wss://*.supabase.co https://*.run.app https://*.lovable.app; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+      "csp": "default-src 'self' asset:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://tauri.localhost https://tauri.localhost http://localhost:8000 http://localhost:54321 http://localhost:1420 ws://localhost:1420 https://film-sparkle-layer.lovable.app https://*.lovable.app https://jlcbbwakkvfhfbeheldv.supabase.co https://*.supabase.co wss://*.supabase.co https://*.run.app; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
     }
   },
   "plugins": {

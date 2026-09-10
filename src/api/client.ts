@@ -5,6 +5,7 @@ import type {
 } from '../types/optrane';
 import { getOptraneApiBase } from '../config/optrane';
 import { publicGatewayHeaders } from './gateway';
+import { optraneFetch } from './optraneFetch';
 import { clearDesktopSession, ensureAccessToken, loadDeviceToken, refreshDesktopSession } from './session';
 
 export function apiBase() {
@@ -69,7 +70,7 @@ function normalizeUploadedScript(value: any, productionId: string, kind: string,
 }
 
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, {
+  const response = await optraneFetch(`${apiBase()}${path}`, {
     ...init,
     headers: {
       ...(init?.body instanceof FormData || init?.body instanceof Blob ? {} : { 'Content-Type': 'application/json' }),
@@ -333,7 +334,7 @@ export interface AuthorizationDecision {
 }
 
 async function publicRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, {
+  const response = await optraneFetch(`${apiBase()}${path}`, {
     ...init,
     headers: {
       ...(init?.body instanceof FormData || init?.body instanceof Blob ? {} : { 'Content-Type': 'application/json' }),
@@ -347,7 +348,7 @@ async function publicRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function authorizedFetch(input: string, init?: RequestInit) {
-  return fetch(input, {
+  return optraneFetch(input, {
     ...init,
     headers: { ...(await authHeaders()), 'x-optrane-client': 'desktop', ...init?.headers },
   });
